@@ -148,13 +148,26 @@ function envInt(name, fallback) {
   return Number.isFinite(n) && n >= 0 ? n : fallback;
 }
 
+// Positive float env override, same rules as envInt.
+function envFloat(name, fallback) {
+  const raw = process.env[name];
+  if (raw == null || raw === "") return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 // Pause between tickers, overridable via REQUEST_SPACING_MS in .env. Each
 // ticker fires a burst of up to MAX_ARTICLES_PER_TICKER × 2 judge calls
 // (Jev + OpenAI) plus its quote/news fetches back-to-back; 30s between
 // tickers keeps that burst rate low enough to stay clear of 429s.
 // Full-universe runs are slow by design (~2h at this setting) — pass a
 // subset to runPipeline() for dev runs.
-export const REQUEST_SPACING_MS = envInt("REQUEST_SPACING_MS", 30_000);
+// With a local JevK5 and no OpenAI, there is no hosted judge left to rate-limit
+// us — only the free quote/news/filing fetches — so the default drops to 5s.
+export const REQUEST_SPACING_MS = envInt(
+  "REQUEST_SPACING_MS",
+  (process.env.JUDGE_ENGINE || "").toLowerCase() === "jevk5" && !process.env.OPENAI_API_KEY ? 5_000 : 30_000,
+);
 
 // Crowd-source pacing, separate from the per-ticker pause: TradingView's
 // symbol search is a light endpoint (~95 lookups, 1s apart is polite), while
@@ -175,6 +188,19 @@ export const REDDIT_USER_AGENT =
   process.env.REDDIT_USER_AGENT || "signals-dashboard/0.1 (set REDDIT_USER_AGENT in .env)";
 
 export const TYPESAFE_API_KEY = process.env.TYPESAFE_API_KEY;
+
+// Which engine fills the dashboard's `jev` slot: "typesafe" (hosted Jev, the
+// default) or "jevk5" (a local JevK5 GGUF behind llama.cpp's llama-server —
+// see src/judgeJevK5.js).
+export const JUDGE_ENGINE = (process.env.JUDGE_ENGINE || "typesafe").toLowerCase();
+export const JEVK5_URL = (process.env.JEVK5_URL || "http://127.0.0.1:8090").replace(/\/+$/, "");
+// Calibration temperature for the letter readout. It belongs to the weights,
+// not the quantization: 1.22 for JevK5 v0.3 4B (every v0.3 4B GGUF, Q4_K_M
+// included), 1.316 for JevK5-9B v0.3.3, 1.049 for 9B v0.3, 1.532 for 4B v0.2,
+// 1.42 for 2B v0.2 (from the JevK5 README / CHANGELOG).
+export const JEVK5_TEMPERATURE = envFloat("JEVK5_TEMPERATURE", 1.22);
+// How many next-token log-probabilities to request; must cover the letters.
+export const JEVK5_TOP_K = envInt("JEVK5_TOP_K", 40);
 
 // Optional comparison engine: judges the exact same articles as Jev, using
 // the same output shape, so the two can be compared side by side. Unlike

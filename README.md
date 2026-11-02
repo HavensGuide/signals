@@ -127,6 +127,51 @@ Per ticker, all sources are merged and capped at `MAX_ARTICLES_PER_TICKER`
 (8, most-recent-first) before any Jev calls — adding sources broadens what's
 considered without letting per-ticker Jev cost grow unbounded.
 
+## Local engine: JevK5 (optional)
+
+Set `JUDGE_ENGINE=jevk5` in `.env` to swap TypeSafe's hosted Jev for
+[JevK5](https://github.com/allebee/jevk5), an independent Apache-2.0
+open-weight Jev alternative (Qwen3.5-4B or 9B plus a distilled LoRA; not
+affiliated with TypeSafe). It answers the same `choice`/`score`/`noul`
+question types the same way — a probability per option from one forward
+pass, nothing generated — so its results fill the dashboard's `jev` slot
+unchanged, labelled "JevK5 (local)". No API key, no quota.
+
+Serve a GGUF from [alibiserikbay/JevK5-GGUF](https://huggingface.co/alibiserikbay/JevK5-GGUF)
+with llama.cpp (needs a build recent enough for Qwen3.5's hybrid layers):
+
+```sh
+llama-server -m jevk5-4b-v0.3-Q4_K_M.gguf -c 8192 -ngl 99 --port 8090
+```
+
+then set `JUDGE_ENGINE=jevk5` (and `JEVK5_URL` if not `http://127.0.0.1:8090`)
+and run `npm run pipeline` as usual.
+
+`src/judgeJevK5.js` is a port of JevK5's own llama.cpp client
+(`jevk5/gguf.py` + `jevk5/prompt.py`, v0.3.x). It sends the pinned prompt,
+byte for byte, as token ids via `/tokenize` + `/completion`, reads the answer
+letters' log-probabilities (`n_probs`), and renormalises them under the
+model's calibration temperature (`JEVK5_TEMPERATURE`, 1.22 for v0.3 4B).
+Each question is its own request (3 per article), where Jev batches all three
+into one `systemOne` call.
+
+Things to know, from JevK5's own README and model card:
+
+- **Quantization:** the v0.3 4B Q4_K_M matches bf16 on 221 of JevBench's 231
+  public items (Q8_0: 229, Q5_K_M: 224). Use Q8_0 or Q5_K_M if they fit.
+- **Measured quality is general-purpose**, not financial: JevBench v1.4 ranks
+  JevK5 v0.2 second of 76 (Jev first), and the v0.3 4B scores 0.784 on the
+  public hard tier. Nobody has measured it on headline sentiment, so treat the
+  first runs as a comparison against Jev, not a drop-in guarantee.
+- **English only.** Inputs over 16,384 tokens are refused (headlines are far
+  below that; `-c 8192` is plenty).
+- **Speed:** ~0.6 s per short decision on CPU alone or an M1 Pro (4B), ~13 ms
+  on an H100; consumer GPUs are unmeasured. The dashboard's judging-speed table
+  records the real numbers for your machine.
+- With no hosted judge to rate-limit, `REQUEST_SPACING_MS` defaults to 5s
+  (unless OpenAI is on) — the remaining spacing protects the free news/quote
+  endpoints.
+
 ## TypeSafe vs OpenAI comparison (optional)
 
 Set `OPENAI_API_KEY` in `.env` to also judge every article with an OpenAI

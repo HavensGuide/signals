@@ -152,6 +152,8 @@ let DATA = [];
 let generatedAt = null;
 let timings = null;
 let openaiEnabled = false;
+// Which engine filled the `jev` fields; older caches lack it and were all TypeSafe.
+let jevEngine = "TypeSafe/Jev";
 const state = { asset: "all", q: "" };
 
 function escapeHtml(str){
@@ -191,7 +193,7 @@ function fmtMs(ms){
 function renderTiming(){
   const box = document.getElementById("fc-timing");
   if (!timings || (!timings.jev && !timings.openai)) { box.hidden = true; return; }
-  const engines = [["TypeSafe/Jev", timings.jev], ["OpenAI", timings.openai]];
+  const engines = [[escapeHtml(jevEngine), timings.jev], ["OpenAI", timings.openai]];
   const means = engines.map(e => e[1] && e[1].meanMs).filter(m => m != null);
   const fastest = means.length > 1 ? Math.min(...means) : null;
   const rows = engines.map(([name, t]) => {
@@ -246,7 +248,7 @@ function buildPanelHTML(d){
   return '<div class="p-head"><div><h2 class="p-sym">'+escapeHtml(d.s)+'</h2><div class="p-name">'+escapeHtml(d.n)+' · '+escapeHtml(d.sec)+'</div>'+
       '<div class="p-price">'+fmtPrice(d.p)+' <span class="'+(d.c>=0?"pup":"pdown")+'">'+fmtChg(d.c)+'</span></div></div>'+
       '<button class="p-close" aria-label="Close">✕</button></div>'+
-    engineBlock("TypeSafe / Jev", d.jev)+
+    engineBlock(jevEngine, d.jev)+
     engineBlock("OpenAI (comparison)", d.openai)+
     (d.crowd ? engineBlock(d.crowd.provider, d.crowd) : "")+
     '<div class="p-section-title">Sources</div>'+
@@ -332,6 +334,7 @@ async function load(){
     generatedAt = payload.generatedAt;
     timings = payload.timings || null;
     openaiEnabled = Boolean(payload.openaiEnabled);
+    jevEngine = String(payload.jevEngine || "TypeSafe/Jev");
     setStatus(DATA.length ? "" : "No tickers in the latest run.");
     renderTiming();
     render();
