@@ -1,0 +1,588 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Signals · Performance</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap">
+<style>
+:root{
+  --p-bg:#f2f4f7; --p-surface:#ffffff; --p-border:#e3e7ee; --p-text:#151a23; --p-dim:#68707e;
+  --p-font-body:"Manrope",system-ui,-apple-system,"Segoe UI",sans-serif; --p-font-mono:"IBM Plex Mono",monospace;
+  --p-radius:14px;
+  --p-bull:#1f8a4c; --p-bull-tint:rgba(31,138,76,.10);
+  --p-bear:#c3453a; --p-bear-tint:rgba(195,69,58,.10);
+  --p-neu:#767f8f; --p-neu-tint:rgba(118,127,143,.10);
+  --fc-accent:#0e6f66;
+  /* Chart: one fixed hue per engine (validated categorical slots 1–4). */
+  --grid:#e1e0d9; --axis:#c3c2b7; --muted:#898781;
+  --eng-Jev:#2a78d6; --eng-JevK5:#eb6834; --eng-OpenAI:#1baf7a; --eng-Crowd:#eda100;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --p-bg:#12161d; --p-surface:#1a1f28; --p-border:#2a3040; --p-text:#eef1f6; --p-dim:#9aa2b2;
+    --p-bull:#4ade80; --p-bull-tint:rgba(74,222,128,.14);
+    --p-bear:#f87171; --p-bear-tint:rgba(248,113,113,.14);
+    --p-neu:#a4acc0; --p-neu-tint:rgba(164,172,192,.14);
+    --fc-accent:#2dd4c4;
+    --grid:#2c2c2a; --axis:#383835;
+    --eng-Jev:#3987e5; --eng-JevK5:#d95926; --eng-OpenAI:#199e70; --eng-Crowd:#c98500;
+  }
+}
+*{box-sizing:border-box;}
+body{background:var(--p-bg);color:var(--p-text);margin:0;font-family:var(--p-font-body);}
+[hidden]{display:none !important;}
+.wrap{max-width:1080px;margin:0 auto;padding:1.6rem 1.2rem 4rem;}
+.nav{display:flex;gap:1rem;font:700 .74rem/1 var(--p-font-body);text-transform:uppercase;letter-spacing:.06em;margin-bottom:1.1rem;}
+.nav a{color:var(--p-dim);text-decoration:none;padding-bottom:.3rem;border-bottom:2px solid transparent;}
+.nav a.on{color:var(--p-text);border-color:var(--fc-accent);}
+h1{font-size:1.6rem;font-weight:800;margin:0;letter-spacing:-.01em;}
+.sub{color:var(--p-dim);font-size:.85rem;margin:.35rem 0 0;max-width:80ch;line-height:1.5;}
+h2{font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--p-dim);margin:2rem 0 .7rem;}
+.card{background:var(--p-surface);border:1px solid var(--p-border);border-radius:var(--p-radius);padding:1rem 1.1rem;}
+.muted{color:var(--p-dim);}
+.small{font-size:.78rem;}
+
+/* filters: one row above everything they scope */
+.filters{display:flex;flex-wrap:wrap;gap:.9rem 1.4rem;align-items:center;margin:1.3rem 0 .3rem;position:sticky;top:0;background:var(--p-bg);padding:.6rem 0;z-index:5;}
+.fgroup{display:flex;align-items:center;gap:.4rem;}
+.flabel{font:700 .62rem/1 var(--p-font-body);text-transform:uppercase;letter-spacing:.06em;color:var(--p-dim);margin-right:.15rem;}
+.chip{font:600 .76rem/1 var(--p-font-body);background:var(--p-surface);border:1px solid var(--p-border);color:var(--p-dim);border-radius:999px;padding:.42rem .8rem;cursor:pointer;}
+.chip.active{background:var(--fc-accent);color:#fff;border-color:var(--fc-accent);}
+.chip:focus-visible,.btn:focus-visible,tr[tabindex]:focus-visible{outline:2px solid var(--fc-accent);outline-offset:2px;}
+.spacer{flex:1;}
+.btn{font:700 .76rem/1 var(--p-font-body);background:var(--p-surface);border:1px solid var(--p-border);color:var(--p-text);border-radius:10px;padding:.55rem .85rem;cursor:pointer;}
+.btn:disabled{opacity:.6;cursor:progress;}
+.refresh-note{font-size:.74rem;color:var(--p-dim);}
+.log{font-family:var(--p-font-mono);font-size:.7rem;color:var(--p-dim);white-space:pre-wrap;max-height:9rem;overflow:auto;margin-top:.6rem;}
+
+/* scorecards */
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:.8rem;}
+.tile .k{display:flex;align-items:center;gap:.45rem;font:700 .7rem/1 var(--p-font-body);text-transform:uppercase;letter-spacing:.05em;color:var(--p-dim);}
+.swatch{width:10px;height:10px;border-radius:3px;flex:none;}
+.tile .v{font-size:2rem;font-weight:800;margin:.45rem 0 .15rem;}
+.tile .v small{font-size:.8rem;font-weight:600;color:var(--p-dim);margin-left:.3rem;}
+.tile .row{display:flex;justify-content:space-between;font-size:.78rem;padding:.28rem 0;border-top:1px solid var(--p-border);}
+.tile .row span:last-child{font-family:var(--p-font-mono);font-variant-numeric:tabular-nums;}
+.tile .pending{font-size:.8rem;color:var(--p-dim);line-height:1.45;margin-top:.4rem;}
+
+/* chart */
+.legend{display:flex;flex-wrap:wrap;gap:.9rem;font-size:.76rem;color:var(--p-dim);margin-bottom:.4rem;}
+.legend span{display:flex;align-items:center;gap:.35rem;}
+.chart{position:relative;}
+.chart svg{display:block;width:100%;height:auto;overflow:visible;}
+.chart text{fill:var(--muted);font:500 11px var(--p-font-body);font-variant-numeric:tabular-nums;}
+.chart .ref{stroke:var(--axis);stroke-width:1;}
+.chart .gridl{stroke:var(--grid);stroke-width:1;}
+.chart .bar{cursor:default;}
+.chart .bar.dim{opacity:.35;}
+.tip{position:absolute;pointer-events:none;background:var(--p-text);color:var(--p-bg);font-size:.74rem;line-height:1.4;padding:.45rem .6rem;border-radius:8px;white-space:nowrap;transform:translate(-50%,calc(-100% - 10px));}
+
+/* tables */
+.tbl-wrap{overflow-x:auto;}
+table{width:100%;border-collapse:collapse;font-size:.8rem;}
+th{font:700 .62rem/1.2 var(--p-font-body);text-transform:uppercase;letter-spacing:.05em;color:var(--p-dim);text-align:right;padding:.5rem .55rem;border-bottom:1px solid var(--p-border);white-space:nowrap;}
+th.l,td.l{text-align:left;}
+th.sort{cursor:pointer;user-select:none;}
+th.sort.on::after{content:" ▾";}
+th.sort.on.asc::after{content:" ▴";}
+td{text-align:right;padding:.48rem .55rem;border-bottom:1px solid var(--p-border);font-variant-numeric:tabular-nums;white-space:nowrap;}
+td.num{font-family:var(--p-font-mono);font-size:.76rem;}
+tbody tr.click{cursor:pointer;}
+tbody tr.click:hover{background:var(--p-bg);}
+tbody tr.sel{background:var(--p-bg);box-shadow:inset 3px 0 0 var(--fc-accent);}
+.up{color:var(--p-bull);} .down{color:var(--p-bear);}
+.call{display:inline-flex;align-items:center;gap:.35rem;font-weight:600;}
+.dot{width:8px;height:8px;border-radius:50%;flex:none;}
+.dot.bull{background:var(--p-bull);} .dot.bear{background:var(--p-bear);} .dot.neu{background:var(--p-neu);}
+.cv{color:var(--p-dim);font-family:var(--p-font-mono);font-size:.7rem;}
+.res{font:700 .66rem/1 var(--p-font-body);padding:.22rem .45rem;border-radius:999px;display:inline-block;}
+.res.hit{color:var(--p-bull);background:var(--p-bull-tint);}
+.res.miss{color:var(--p-bear);background:var(--p-bear-tint);}
+.res.na{color:var(--p-dim);background:var(--p-neu-tint);}
+.search{font:500 .82rem/1 var(--p-font-body);background:var(--p-surface);border:1px solid var(--p-border);border-radius:10px;padding:.5rem .75rem;color:var(--p-text);min-width:200px;}
+.toolbar{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;margin-bottom:.7rem;}
+.status{color:var(--p-dim);padding:2rem 0;text-align:center;}
+
+/* side panel (same pattern as the signals page) */
+.backdrop{position:fixed;inset:0;background:rgba(8,10,16,.44);opacity:0;pointer-events:none;transition:opacity .2s;z-index:399;}
+.backdrop.open{opacity:1;pointer-events:auto;}
+.panel{position:fixed;top:0;right:0;height:100%;width:min(480px,100%);background:var(--p-bg);border-left:1px solid var(--p-border);transform:translateX(100%);transition:transform .24s;z-index:400;overflow-y:auto;}
+.panel.open{transform:none;}
+.panel-inner{padding:1.3rem 1.2rem 3rem;}
+.p-head{display:flex;justify-content:space-between;gap:.6rem;align-items:flex-start;margin-bottom:.8rem;}
+.p-sym{font-size:1.5rem;font-weight:800;margin:0;}
+.p-close{background:var(--p-surface);border:1px solid var(--p-border);color:var(--p-text);width:30px;height:30px;border-radius:8px;cursor:pointer;flex:none;}
+.p-block{margin-bottom:1.1rem;}
+.p-title{font:700 .68rem/1 var(--p-font-body);letter-spacing:.07em;text-transform:uppercase;color:var(--p-dim);margin-bottom:.5rem;display:flex;align-items:center;gap:.4rem;}
+.p-summary{font-size:.88rem;line-height:1.55;background:var(--p-surface);border:1px solid var(--p-border);border-radius:var(--p-radius);padding:.75rem .9rem;margin:0;}
+.p-meta{display:flex;gap:.5rem;margin-top:.5rem;flex-wrap:wrap;}
+.tag{display:inline-flex;align-items:center;gap:.3rem;font:700 .68rem/1 var(--p-font-body);padding:.28rem .55rem;border-radius:999px;}
+.tag.bull{color:var(--p-bull);background:var(--p-bull-tint);} .tag.bear{color:var(--p-bear);background:var(--p-bear-tint);} .tag.neu{color:var(--p-neu);background:var(--p-neu-tint);} .tag.na{color:var(--p-dim);background:var(--p-border);}
+.src{border:1px solid var(--p-border);border-radius:10px;padding:.65rem .8rem;margin-bottom:.5rem;background:var(--p-surface);}
+.src-top{font-size:.7rem;color:var(--p-dim);margin-bottom:.25rem;}
+.src-head{font-size:.84rem;line-height:1.45;margin-bottom:.35rem;}
+.tag-label{font-size:.6rem;text-transform:uppercase;letter-spacing:.03em;color:var(--p-dim);align-self:center;}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <nav class="nav"><a href="/">Today's signals</a><a href="/performance.html" class="on">Performance</a></nav>
+  <h1>How the signals performed</h1>
+  <p class="sub">Each pipeline run is saved with the calls each engine made at that moment. Returns are measured from the price recorded at signal time, so there is no look-ahead.
+    A <b>hit</b> is a bullish call followed by a gain, or a bearish call followed by a drop. Neutral calls aren't scored. 50% is a coin flip.</p>
+
+  <div class="filters" role="group" aria-label="Filters">
+    <div class="fgroup" id="f-horizon"><span class="flabel">Horizon</span></div>
+    <div class="fgroup" id="f-mode"><span class="flabel">Returns</span>
+      <button class="chip active" data-v="excess" title="Ticker return minus its asset-class average over the same window">Market-adjusted</button>
+      <button class="chip" data-v="ret">Raw</button>
+    </div>
+    <div class="fgroup" id="f-asset"><span class="flabel">Assets</span>
+      <button class="chip active" data-v="all">All</button>
+      <button class="chip" data-v="stock">Equities</button>
+      <button class="chip" data-v="crypto">Crypto</button>
+    </div>
+    <span class="spacer"></span>
+    <span class="refresh-note" id="bt-age"></span>
+    <button class="btn" id="bt-run">Refresh returns</button>
+  </div>
+  <div class="card" id="bt-job" hidden><div class="small" id="bt-job-msg"></div><div class="log" id="bt-log"></div></div>
+  <div class="status" id="status" hidden></div>
+
+  <div id="content" hidden>
+    <h2>Scorecard · <span id="score-scope"></span></h2>
+    <div class="tiles" id="tiles"></div>
+
+    <h2>Hit rate by horizon</h2>
+    <div class="card">
+      <div class="legend" id="legend"></div>
+      <div class="chart" id="chart"><div class="tip" id="tip" hidden></div></div>
+      <div class="tbl-wrap" style="margin-top:.8rem">
+        <table id="hits-table" aria-label="Hit rate table (same data as the chart)"></table>
+      </div>
+    </div>
+
+    <h2>Signal runs</h2>
+    <div class="card tbl-wrap"><table id="runs"></table></div>
+
+    <h2 id="calls-title">Calls</h2>
+    <div class="card">
+      <div class="toolbar">
+        <input class="search" id="q" placeholder="Search ticker…" aria-label="Search ticker" />
+        <div class="fgroup" id="f-call"><span class="flabel">Show</span>
+          <button class="chip active" data-v="all">All calls</button>
+          <button class="chip" data-v="dir">Bull/Bear only</button>
+          <button class="chip" data-v="disagree">Engines disagree</button>
+        </div>
+        <span class="spacer"></span>
+        <span class="small muted" id="calls-count"></span>
+      </div>
+      <div class="tbl-wrap"><table id="calls"></table></div>
+    </div>
+  </div>
+</main>
+
+<div class="backdrop" id="backdrop"></div>
+<div class="panel" id="panel" role="dialog" aria-label="Call detail" aria-hidden="true"><div class="panel-inner" id="panel-body"></div></div>
+
+<script>
+(function(){
+"use strict";
+
+const ENGINE_ORDER = ["Jev", "JevK5", "OpenAI", "Crowd"];
+const ENGINE_LABEL = { Jev: "TypeSafe/Jev", JevK5: "JevK5 (local)", OpenAI: "OpenAI", Crowd: "Crowd" };
+const HORIZON_LABEL = { "1d": "1 day", "1w": "1 week", "2w": "2 weeks", "4w": "4 weeks", "to date": "To date" };
+const SIGN = { bull: 1, bear: -1, neu: 0 };
+const state = { horizon: "to date", mode: "excess", asset: "all", run: null, q: "", call: "all", sort: { key: "ret", dir: -1 } };
+let BT = null;         // backtest.json
+let HISTORY = [];      // /api/history list
+const snapCache = new Map(); // history id -> full snapshot
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+const pct = (x, d = 2) => x == null ? "—" : (x >= 0 ? "+" : "") + x.toFixed(d) + "%";
+const sigWord = (s) => s === "bull" ? "Bullish" : s === "bear" ? "Bearish" : "Neutral";
+const fmtTime = (iso) => new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+const fmtPrice = (p) => p == null ? "—" : p >= 1000 ? p.toLocaleString(undefined, { maximumFractionDigits: 0 }) : p >= 1 ? p.toFixed(2) : p.toPrecision(3);
+const ago = (iso) => {
+  const m = Math.round((Date.now() - Date.parse(iso)) / 60000);
+  if (m < 60) return m + " min ago";
+  const h = Math.round(m / 60);
+  return h < 48 ? h + " h ago" : Math.round(h / 24) + " days ago";
+};
+const engineVar = (e) => `var(--eng-${e})`;
+
+// ---------- scoring (all client-side so filters re-slice instantly) ----------
+
+function val(row, h){ return row[state.mode]?.[h] ?? null; }
+function outcome(row, engine, h){
+  const sig = row.sig[engine];
+  if (!sig) return null;
+  const v = val(row, h);
+  if (sig === "neu") return { kind: "neu", v };
+  if (v == null) return { kind: "pending", v };
+  return { kind: Math.sign(v) === SIGN[sig] ? "hit" : "miss", v };
+}
+function filteredRows(){
+  return BT.rows.filter((r) => state.asset === "all" || r.a === state.asset);
+}
+function engines(){
+  const present = new Set(BT.rows.flatMap((r) => Object.keys(r.sig).filter((k) => r.sig[k])));
+  return ENGINE_ORDER.filter((e) => present.has(e));
+}
+function score(rows, engine, h){
+  let hit = 0, miss = 0, pending = 0;
+  const by = { bull: [], neu: [], bear: [] };
+  for (const r of rows) {
+    const o = outcome(r, engine, h);
+    if (!o) continue;
+    if (o.kind === "hit") hit++; else if (o.kind === "miss") miss++; else if (o.kind === "pending") pending++;
+    if (o.v != null) by[r.sig[engine]].push(o.v);
+  }
+  const avg = (a) => a.length ? a.reduce((s, x) => s + x, 0) / a.length : null;
+  const n = hit + miss;
+  const bull = avg(by.bull), bear = avg(by.bear);
+  return { n, hit, miss, pending, rate: n ? hit / n : null, bull, neu: avg(by.neu), bear, spread: bull != null && bear != null ? bull - bear : null,
+           nBull: by.bull.length, nNeu: by.neu.length, nBear: by.bear.length };
+}
+
+// ---------- scorecard ----------
+
+function renderTiles(){
+  const rows = filteredRows();
+  $("score-scope").textContent = HORIZON_LABEL[state.horizon] + ", " + (state.mode === "excess" ? "market-adjusted" : "raw") + " returns, all runs";
+  $("tiles").innerHTML = engines().map((e) => {
+    const s = score(rows, e, state.horizon);
+    const head = `<div class="k"><span class="swatch" style="background:${engineVar(e)}"></span>${esc(ENGINE_LABEL[e])}</div>`;
+    if (!s.n) {
+      const total = rows.filter((r) => r.sig[e] && r.sig[e] !== "neu").length;
+      return `<div class="card tile">${head}<div class="v">—</div><div class="pending">No ${esc(HORIZON_LABEL[state.horizon].toLowerCase())} returns yet for its ${total} bull/bear call${total === 1 ? "" : "s"}. ` +
+        (state.horizon === "to date" ? "Stock calls are scored after the next market close; crypto after an hour." : "Try “To date”, or check back once the window has passed.") + `</div></div>`;
+    }
+    return `<div class="card tile">${head}<div class="v">${Math.round(s.rate * 100)}%<small>hit rate</small></div>` +
+      `<div class="row"><span>Scored calls</span><span>${s.hit} hit · ${s.miss} miss</span></div>` +
+      `<div class="row"><span>After bullish calls</span><span class="${s.bull >= 0 ? "up" : "down"}">${pct(s.bull)}</span></div>` +
+      `<div class="row"><span>After bearish calls</span><span class="${s.bear >= 0 ? "up" : "down"}">${pct(s.bear)}</span></div>` +
+      `<div class="row"><span>Bull − bear spread</span><span>${pct(s.spread)}</span></div>` +
+      (s.pending ? `<div class="row"><span>Waiting for prices</span><span>${s.pending}</span></div>` : "") +
+      `</div>`;
+  }).join("");
+}
+
+// ---------- chart: grouped bars, horizon × engine ----------
+
+function renderChart(){
+  const rows = filteredRows();
+  const eng = engines();
+  const hs = BT.horizons;
+  $("legend").innerHTML = eng.map((e) => `<span><span class="swatch" style="background:${engineVar(e)}"></span>${esc(ENGINE_LABEL[e])}</span>`).join("") +
+    `<span style="margin-left:auto">Line at 50% = coin flip · selected horizon highlighted</span>`;
+
+  const data = hs.map((h) => ({ h, cells: eng.map((e) => ({ e, ...score(rows, e, h) })) }));
+  const box = $("chart");
+  const W = Math.max(320, box.clientWidth), H = 240;
+  const m = { t: 12, r: 8, b: 30, l: 38 };
+  const pw = W - m.l - m.r, ph = H - m.t - m.b;
+  const gw = pw / hs.length;
+  const barW = Math.min(22, (gw * 0.7 - (eng.length - 1) * 2) / eng.length);
+  const y = (v) => m.t + ph - v * ph;
+  let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Hit rate by horizon and engine">`;
+  for (const t of [0, 0.25, 0.5, 0.75, 1]) {
+    svg += `<line class="${t === 0.5 ? "ref" : "gridl"}" x1="${m.l}" x2="${W - m.r}" y1="${y(t)}" y2="${y(t)}"/>` +
+      `<text x="${m.l - 6}" y="${y(t) + 4}" text-anchor="end">${t * 100}%</text>`;
+  }
+  data.forEach((g, i) => {
+    const gx = m.l + i * gw + gw / 2;
+    const totalW = eng.length * barW + (eng.length - 1) * 2;
+    g.cells.forEach((c, j) => {
+      if (c.rate == null) return;
+      const x = gx - totalW / 2 + j * (barW + 2);
+      const top = y(c.rate), base = y(0), r = Math.min(4, barW / 2, base - top);
+      const d = `M${x},${base}V${top + r}Q${x},${top} ${x + r},${top}H${x + barW - r}Q${x + barW},${top} ${x + barW},${top + r}V${base}Z`;
+      const tip = `${ENGINE_LABEL[c.e]} · ${HORIZON_LABEL[g.h]}|${Math.round(c.rate * 100)}% hit rate (${c.hit} of ${c.n})|bull ${pct(c.bull)} · bear ${pct(c.bear)}`;
+      svg += `<path class="bar${g.h === state.horizon ? "" : " dim"}" d="${d}" fill="${engineVar(c.e)}" data-tip="${esc(tip)}" data-x="${x + barW / 2}" data-y="${top}"/>` +
+        // invisible, larger hit target
+        `<rect x="${x - 1}" y="${m.t}" width="${barW + 2}" height="${ph}" fill="transparent" data-tip="${esc(tip)}" data-x="${x + barW / 2}" data-y="${top}"/>`;
+    });
+    const any = g.cells.some((c) => c.rate != null);
+    svg += `<text x="${gx}" y="${H - 10}" text-anchor="middle" style="${g.h === state.horizon ? "fill:var(--p-text);font-weight:700" : ""}">${esc(HORIZON_LABEL[g.h])}${any ? "" : " · pending"}</text>`;
+  });
+  svg += `</svg>`;
+  box.querySelector("svg")?.remove();
+  box.insertAdjacentHTML("afterbegin", svg);
+
+  // table twin of the chart
+  $("hits-table").innerHTML = `<thead><tr><th class="l">Engine</th><th class="l">Horizon</th><th>Hit rate</th><th>Hits / scored</th><th>Bull avg</th><th>Neutral avg</th><th>Bear avg</th><th>Bull − bear</th><th>Pending</th></tr></thead><tbody>` +
+    eng.flatMap((e) => data.map((g) => {
+      const c = g.cells.find((x) => x.e === e);
+      // Rows with nothing scored yet are noise, except at the selected horizon (where "pending" is the answer).
+      if (!c.n && g.h !== state.horizon) return "";
+      if (!c.n && !c.pending) return "";
+      return `<tr${g.h === state.horizon ? ' class="sel"' : ""}><td class="l"><span class="call"><span class="swatch" style="background:${engineVar(e)}"></span>${esc(ENGINE_LABEL[e])}</span></td><td class="l">${esc(HORIZON_LABEL[g.h])}</td>` +
+        `<td class="num">${c.rate == null ? "—" : Math.round(c.rate * 100) + "%"}</td><td class="num">${c.hit} / ${c.n}</td>` +
+        `<td class="num">${pct(c.bull)} <span class="cv">(${c.nBull})</span></td><td class="num">${pct(c.neu)} <span class="cv">(${c.nNeu})</span></td><td class="num">${pct(c.bear)} <span class="cv">(${c.nBear})</span></td>` +
+        `<td class="num">${pct(c.spread)}</td><td class="num">${c.pending || ""}</td></tr>`;
+    })).join("") + `</tbody>`;
+}
+
+const tip = $("tip");
+$("chart").addEventListener("mousemove", (ev) => {
+  const t = ev.target.closest("[data-tip]");
+  if (!t) { tip.hidden = true; return; }
+  const [a, b, c] = t.dataset.tip.split("|");
+  tip.innerHTML = `<b>${esc(a)}</b><br>${esc(b)}<br>${esc(c)}`;
+  tip.style.left = t.dataset.x * ($("chart").clientWidth / $("chart").querySelector("svg").viewBox.baseVal.width) + "px";
+  tip.style.top = t.dataset.y * ($("chart").clientWidth / $("chart").querySelector("svg").viewBox.baseVal.width) + "px";
+  tip.hidden = false;
+});
+$("chart").addEventListener("mouseleave", () => { tip.hidden = true; });
+
+// ---------- runs timeline ----------
+
+function runRows(gen){ return filteredRows().filter((r) => r.snapshot === gen); }
+
+function renderRuns(){
+  const eng = engines();
+  const metas = [...BT.snapshots].reverse();
+  $("runs").innerHTML = `<thead><tr><th class="l">Run</th><th class="l">Judged by</th><th>Bull / Neu / Bear</th>` +
+    eng.map((e) => `<th><span class="call" style="justify-content:flex-end"><span class="swatch" style="background:${engineVar(e)}"></span>${esc(e)}</span></th>`).join("") +
+    `<th class="l">${esc(HORIZON_LABEL[state.horizon])} returns</th></tr></thead><tbody>` +
+    metas.map((s) => {
+      const rows = runRows(s.generatedAt);
+      const c = { bull: 0, neu: 0, bear: 0 };
+      for (const r of rows) { const sig = r.sig[s.engine]; if (sig) c[sig]++; }
+      const priced = rows.filter((r) => val(r, state.horizon) != null).length;
+      const cells = eng.map((e) => {
+        const sc = score(rows, e, state.horizon);
+        if (!rows.some((r) => r.sig[e])) return `<td class="muted">·</td>`;
+        return `<td class="num">${sc.rate == null ? '<span class="muted">pending</span>' : Math.round(sc.rate * 100) + '% <span class="cv">' + sc.hit + "/" + sc.n + "</span>"}</td>`;
+      }).join("");
+      const asOf = state.horizon === "to date" ? latestAt(rows) : null;
+      return `<tr class="click${s.generatedAt === state.run ? " sel" : ""}" tabindex="0" data-run="${esc(s.generatedAt)}">` +
+        `<td class="l"><b>${esc(fmtTime(s.generatedAt))}</b><div class="cv">${esc(ago(s.generatedAt))}</div></td>` +
+        `<td class="l">${esc(s.jevEngine || ENGINE_LABEL[s.engine])}</td>` +
+        `<td class="num"><span class="up">${c.bull}</span> / <span class="muted">${c.neu}</span> / <span class="down">${c.bear}</span></td>` + cells +
+        `<td class="l small muted">${priced ? priced + " of " + rows.length + " priced" + (asOf ? " · through " + esc(fmtTime(asOf)) : "") : "none yet"}</td></tr>`;
+    }).join("") + `</tbody>`;
+}
+function latestAt(rows){
+  let best = null;
+  for (const r of rows) if (r.toDateAt && (!best || r.toDateAt > best)) best = r.toDateAt;
+  return best;
+}
+$("runs").addEventListener("click", (e) => {
+  const tr = e.target.closest("tr[data-run]");
+  if (!tr) return;
+  state.run = tr.dataset.run;
+  renderRuns(); renderCalls();
+  $("calls-title").scrollIntoView({ behavior: "smooth", block: "start" });
+});
+$("runs").addEventListener("keydown", (e) => { if (e.key === "Enter") e.target.closest("tr[data-run]")?.click(); });
+
+// ---------- calls in the selected run ----------
+
+function renderCalls(){
+  const meta = BT.snapshots.find((s) => s.generatedAt === state.run);
+  $("calls-title").textContent = "Calls in the run of " + fmtTime(state.run) + " · " + HORIZON_LABEL[state.horizon];
+  const eng = engines().filter((e) => BT.rows.some((r) => r.snapshot === state.run && r.sig[e]));
+  let rows = runRows(state.run);
+  if (state.q) rows = rows.filter((r) => r.s.toLowerCase().includes(state.q.toLowerCase()));
+  if (state.call === "dir") rows = rows.filter((r) => eng.some((e) => r.sig[e] && r.sig[e] !== "neu"));
+  if (state.call === "disagree") rows = rows.filter((r) => new Set(eng.map((e) => r.sig[e]).filter(Boolean)).size > 1);
+  const { key, dir } = state.sort;
+  const keyOf = (r) => key === "s" ? r.s : key === "ret" ? val(r, state.horizon) : key.startsWith("cv:") ? r.cv[key.slice(3)] : null;
+  rows = rows.slice().sort((a, b) => {
+    const x = keyOf(a), y = keyOf(b);
+    if (x == null && y == null) return a.s.localeCompare(b.s);
+    if (x == null) return 1;
+    if (y == null) return -1;
+    return (typeof x === "string" ? x.localeCompare(y) : x - y) * dir;
+  });
+  $("calls-count").textContent = rows.length + " ticker" + (rows.length === 1 ? "" : "s");
+  const th = (k, label, cls = "") => `<th class="sort ${cls}${key === k ? " on" + (dir > 0 ? " asc" : "") : ""}" data-sort="${k}">${label}</th>`;
+  $("calls").innerHTML = `<thead><tr>${th("s", "Ticker", "l")}<th>Price at signal</th>` +
+    eng.map((e) => th("cv:" + e, `<span class="call" style="justify-content:flex-end"><span class="swatch" style="background:${engineVar(e)}"></span>${esc(e)} call</span>`)).join("") +
+    th("ret", (state.mode === "excess" ? "Mkt-adj " : "") + "return") + eng.map((e) => `<th>${esc(e)}</th>`).join("") + `</tr></thead><tbody>` +
+    rows.map((r) => {
+      const v = val(r, state.horizon);
+      return `<tr class="click" tabindex="0" data-sym="${esc(r.s)}"><td class="l"><b>${esc(r.s)}</b> <span class="cv">${r.a === "crypto" ? "crypto" : ""}</span></td>` +
+        `<td class="num">${fmtPrice(r.p)}</td>` +
+        eng.map((e) => r.sig[e] ? `<td><span class="call"><span class="dot ${r.sig[e]}"></span>${sigWord(r.sig[e])} <span class="cv">${r.cv[e] ?? ""}</span></span></td>` : `<td class="muted">·</td>`).join("") +
+        `<td class="num ${v == null ? "muted" : v >= 0 ? "up" : "down"}">${v == null ? "pending" : pct(v)}</td>` +
+        eng.map((e) => `<td>${resBadge(outcome(r, e, state.horizon))}</td>`).join("") + `</tr>`;
+    }).join("") + `</tbody>`;
+}
+function resBadge(o){
+  if (!o) return '<span class="muted">·</span>';
+  if (o.kind === "hit") return '<span class="res hit">✓ hit</span>';
+  if (o.kind === "miss") return '<span class="res miss">✗ miss</span>';
+  if (o.kind === "neu") return '<span class="res na">neutral</span>';
+  return '<span class="res na">pending</span>';
+}
+$("calls").addEventListener("click", (e) => {
+  const s = e.target.closest("th[data-sort]");
+  if (s) {
+    const k = s.dataset.sort;
+    state.sort = state.sort.key === k ? { key: k, dir: -state.sort.dir } : { key: k, dir: k === "s" ? 1 : -1 };
+    renderCalls();
+    return;
+  }
+  const tr = e.target.closest("tr[data-sym]");
+  if (tr) openDetail(tr.dataset.sym);
+});
+$("calls").addEventListener("keydown", (e) => { if (e.key === "Enter") e.target.closest("tr[data-sym]")?.click(); });
+
+// ---------- detail panel: how the call was made, and this ticker over time ----------
+
+async function snapshotFor(gen){
+  const h = HISTORY.find((x) => x.generatedAt === gen);
+  if (!h) return null;
+  if (!snapCache.has(h.id)) {
+    const res = await fetch("/api/history/" + encodeURIComponent(h.id));
+    snapCache.set(h.id, res.ok ? await res.json() : null);
+  }
+  return snapCache.get(h.id);
+}
+
+function tagOrNA(t){ return t ? `<span class="tag ${t}">${sigWord(t)}</span>` : '<span class="tag na">n/a</span>'; }
+
+async function openDetail(sym){
+  const meta = BT.snapshots.find((s) => s.generatedAt === state.run);
+  const row = BT.rows.find((r) => r.snapshot === state.run && r.s === sym);
+  showPanel(`<div class="p-head"><div><h2 class="p-sym">${esc(sym)}</h2><div class="muted small">Loading the run's reasoning…</div></div><button class="p-close" aria-label="Close">✕</button></div>`);
+  const snap = await snapshotFor(state.run);
+  const t = snap?.tickers?.find((x) => x.s === sym);
+  const engName = meta.engine;
+  const block = (label, color, e) => !e ? "" :
+    `<div class="p-block"><div class="p-title"><span class="swatch" style="background:${color}"></span>${esc(label)}</div>` +
+    `<p class="p-summary">${esc(e.summary || "No summary recorded.")}</p>` +
+    `<div class="p-meta"><span class="tag ${e.sig}">${sigWord(e.sig)}</span><span class="tag na">Conviction ${esc(e.cv)} / 100</span>${e.regulatoryFlag ? '<span class="tag bear">Regulatory flag</span>' : ""}</div></div>`;
+
+  const horizons = BT.horizons.map((h) => {
+    const v = val(row, h);
+    return `<tr><td class="l">${esc(HORIZON_LABEL[h])}</td><td class="num">${row.exit?.[h] == null ? "—" : fmtPrice(row.exit[h])}</td><td class="num ${v == null ? "muted" : v >= 0 ? "up" : "down"}">${v == null ? "pending" : pct(v)}</td>` +
+      engines().filter((e) => row.sig[e]).map((e) => `<td>${resBadge(outcome(row, e, h))}</td>`).join("") + `</tr>`;
+  }).join("");
+
+  const past = BT.rows.filter((r) => r.s === sym).sort((a, b) => b.snapshot.localeCompare(a.snapshot)).map((r) => {
+    const m = BT.snapshots.find((s) => s.generatedAt === r.snapshot);
+    const v = val(r, state.horizon);
+    return `<tr${r.snapshot === state.run ? ' class="sel"' : ""}><td class="l">${esc(fmtTime(r.snapshot))}</td>` +
+      engines().map((e) => `<td>${r.sig[e] ? `<span class="call"><span class="dot ${r.sig[e]}"></span>${esc(e)}</span>` : '<span class="muted">·</span>'}</td>`).join("") +
+      `<td class="num ${v == null ? "muted" : v >= 0 ? "up" : "down"}">${v == null ? "pending" : pct(v)}</td></tr>`;
+  }).join("");
+
+  const sources = (t?.src || []).map((s) => `<div class="src"><div class="src-top">${esc(s.so)} · ${esc(s.t)} before the run</div><div class="src-head">${esc(s.h)}</div>` +
+    `<div class="p-meta"><span class="tag-label">${esc(engName)}</span>${tagOrNA(s.jevTag)}${snap?.openaiEnabled ? '<span class="tag-label">OpenAI</span>' + tagOrNA(s.openaiTag) : ""}</div></div>`).join("");
+
+  showPanel(`<div class="p-head"><div><h2 class="p-sym">${esc(sym)}</h2><div class="muted small">${esc(t?.n || "")}${t?.sec ? " · " + esc(t.sec) : ""}</div>` +
+      `<div class="small" style="margin-top:.35rem">Run of ${esc(fmtTime(state.run))} · price then <b>${fmtPrice(row.p)}</b>${t && Number.isFinite(t.c) ? ` (<span class="${t.c >= 0 ? "up" : "down"}">${pct(t.c)}</span> that day)` : ""}</div></div>` +
+      `<button class="p-close" aria-label="Close">✕</button></div>` +
+    `<div class="p-block"><div class="p-title">What happened next (${state.mode === "excess" ? "market-adjusted" : "raw"})</div><div class="card tbl-wrap" style="padding:.3rem .5rem"><table><thead><tr><th class="l">Horizon</th><th>Exit price</th><th>Return</th>` +
+      engines().filter((e) => row.sig[e]).map((e) => `<th>${esc(e)}</th>`).join("") + `</tr></thead><tbody>${horizons}</tbody></table></div></div>` +
+    (t ? block(meta.jevEngine || ENGINE_LABEL[engName], engineVar(engName), t.jev) + block("OpenAI (comparison)", engineVar("OpenAI"), t.openai) + block(t.crowd ? "Crowd · " + t.crowd.provider : "Crowd", engineVar("Crowd"), t.crowd)
+       : '<p class="muted small">The saved run for this call could not be loaded, so its reasoning is unavailable.</p>') +
+    (sources ? `<div class="p-block"><div class="p-title">Sources the engine read (${(t.src || []).length})</div>${sources}</div>` : "") +
+    `<div class="p-block"><div class="p-title">${esc(sym)} across runs · ${esc(HORIZON_LABEL[state.horizon])}</div><div class="card tbl-wrap" style="padding:.3rem .5rem"><table><thead><tr><th class="l">Run</th>` +
+      engines().map((e) => `<th>${esc(e)}</th>`).join("") + `<th>Return</th></tr></thead><tbody>${past}</tbody></table></div></div>`);
+}
+function showPanel(html){
+  $("panel-body").innerHTML = html;
+  $("backdrop").classList.add("open"); $("panel").classList.add("open"); $("panel").setAttribute("aria-hidden", "false");
+}
+function closePanel(){
+  $("backdrop").classList.remove("open"); $("panel").classList.remove("open"); $("panel").setAttribute("aria-hidden", "true");
+}
+$("panel-body").addEventListener("click", (e) => { if (e.target.closest(".p-close")) closePanel(); });
+$("backdrop").addEventListener("click", closePanel);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePanel(); });
+
+// ---------- filters ----------
+
+function chipGroup(id, key, after){
+  $(id).addEventListener("click", (e) => {
+    const b = e.target.closest("[data-v]");
+    if (!b) return;
+    state[key] = b.dataset.v;
+    $(id).querySelectorAll("[data-v]").forEach((x) => x.classList.toggle("active", x === b));
+    (after || renderAll)();
+  });
+}
+chipGroup("f-horizon", "horizon");
+chipGroup("f-mode", "mode");
+chipGroup("f-asset", "asset");
+chipGroup("f-call", "call", () => renderCalls());
+$("q").addEventListener("input", (e) => { state.q = e.target.value; renderCalls(); });
+let resizeT; window.addEventListener("resize", () => { clearTimeout(resizeT); resizeT = setTimeout(() => BT && renderChart(), 120); });
+
+function renderAll(){
+  if (!BT) return;
+  renderTiles(); renderChart(); renderRuns(); renderCalls();
+}
+
+// ---------- loading + refresh ----------
+
+function setStatus(msg){ $("status").hidden = !msg; $("status").textContent = msg || ""; }
+
+async function load(){
+  try {
+    const [bt, hist] = await Promise.all([fetch("/api/backtest"), fetch("/api/history")]);
+    HISTORY = hist.ok ? await hist.json() : [];
+    if (!bt.ok) {
+      const body = await bt.json().catch(() => ({}));
+      $("content").hidden = true;
+      setStatus(body.error || "No backtest results yet.");
+      return;
+    }
+    const data = await bt.json();
+    if (!data.horizons) { // results from before "to date" existed
+      data.horizons = ["1d", "1w", "2w", "4w"];
+      data.snapshots = [...new Set(data.rows.map((r) => r.snapshot))].sort().map((g) => ({ generatedAt: g, engine: Object.keys(data.rows.find((r) => r.snapshot === g).sig).find((k) => k === "Jev" || k === "JevK5") || "Jev" }));
+      data.rows.forEach((r) => { r.cv = r.cv || {}; r.exit = r.exit || {}; });
+    }
+    BT = data;
+    if (!BT.horizons.includes(state.horizon)) state.horizon = BT.horizons[0];
+    $("f-horizon").querySelectorAll("[data-v]").forEach((b) => b.remove());
+    $("f-horizon").insertAdjacentHTML("beforeend", BT.horizons.map((h) => `<button class="chip${h === state.horizon ? " active" : ""}" data-v="${esc(h)}">${esc(HORIZON_LABEL[h] || h)}</button>`).join(""));
+    if (!state.run || !BT.snapshots.some((s) => s.generatedAt === state.run)) state.run = BT.snapshots.at(-1)?.generatedAt;
+    $("bt-age").textContent = "Returns updated " + ago(BT.generatedAt);
+    $("bt-age").title = fmtTime(BT.generatedAt);
+    const unscored = HISTORY.filter((h) => !BT.snapshots.some((s) => s.generatedAt === h.generatedAt));
+    if (unscored.length) $("bt-age").textContent += ` · ${unscored.length} newer run${unscored.length > 1 ? "s" : ""} not in it yet`;
+    setStatus("");
+    $("content").hidden = false;
+    renderAll();
+  } catch (err) {
+    setStatus("Couldn't load performance data: " + err.message);
+  }
+}
+
+async function poll(){
+  const job = await (await fetch("/api/backtest/status")).json();
+  showJob(job);
+  if (job.running) setTimeout(poll, 3000);
+  else if (job.exitCode === 0) { $("bt-job").hidden = true; load(); }
+}
+function showJob(job){
+  $("bt-run").disabled = job.running;
+  if (!job.startedAt) return;
+  $("bt-job").hidden = false;
+  $("bt-job-msg").textContent = job.running
+    ? "Fetching prices from Yahoo and CoinGecko… this takes about 4 minutes (CoinGecko is rate-limited). You can keep browsing."
+    : job.exitCode === 0 ? "Done." : "The backtest failed (exit code " + job.exitCode + "). Log below.";
+  $("bt-log").textContent = job.log.slice(-12).join("\n");
+}
+$("bt-run").addEventListener("click", async () => {
+  $("bt-run").disabled = true;
+  const res = await fetch("/api/backtest/run", { method: "POST" });
+  if (!res.ok && res.status !== 409) { $("bt-run").disabled = false; alert("Couldn't start the backtest."); return; }
+  poll();
+});
+
+load();
+fetch("/api/backtest/status").then((r) => r.json()).then((job) => { if (job.running) poll(); }).catch(() => {});
+})();
+</script>
+</body>
+</html>

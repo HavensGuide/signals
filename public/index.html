@@ -36,6 +36,9 @@ body{background:var(--p-bg);color:var(--p-text);margin:0;font-family:var(--p-fon
 [hidden]{display:none !important;}
 
 .fc-wrap{ max-width:640px; margin:0 auto; padding:2.1rem 1.2rem 4rem; }
+.fc-nav{ display:flex; gap:1rem; font:700 .74rem/1 var(--p-font-body); text-transform:uppercase; letter-spacing:.06em; margin-bottom:1.1rem; }
+.fc-nav a{ color:var(--p-dim); text-decoration:none; padding-bottom:.3rem; border-bottom:2px solid transparent; }
+.fc-nav a.on{ color:var(--p-text); border-color:var(--fc-accent); }
 .fc-title{ font-family:var(--p-font-display); font-size:1.85rem; font-weight:600; margin:0; letter-spacing:-.01em; }
 .fc-title small{ display:block; font-family:var(--p-font-body); font-weight:600; font-size:.7rem; color:var(--p-dim); text-transform:uppercase; letter-spacing:.08em; margin-top:.45rem; }
 .fc-toolbar{ display:flex; gap:.5rem; margin:1.3rem 0 1.5rem; flex-wrap:wrap; align-items:center; }
@@ -124,6 +127,7 @@ body{background:var(--p-bg);color:var(--p-text);margin:0;font-family:var(--p-fon
 <body>
 
 <main class="fc-wrap">
+  <nav class="fc-nav"><a href="/" class="on">Today's signals</a><a href="/performance.html">Performance</a></nav>
   <h1 class="fc-title">Today's signals<small>Stocks &amp; crypto · <span id="fc-engine-name">Jev</span> judgments, plus a public crowd signal</small></h1>
   <div class="fc-toolbar">
     <input class="fc-search" id="fc-search" placeholder="Search a symbol or company…" />

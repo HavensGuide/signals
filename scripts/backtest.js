@@ -25,12 +25,19 @@ const DATA_DIR = fileURLToPath(new URL("../data/", import.meta.url));
 const DAY = 86_400_000;
 // Horizons: stocks in trading sessions, crypto (trades every day) in days,
 // paired so each column covers about the same stretch of calendar time.
+// "to date" is the return from signal time to the latest price available, so a
+// snapshot gets scored as soon as any price after it exists (the fixed
+// horizons stay blank until their full window has passed).
 const HORIZONS = [
   { label: "1d", sessions: 1, days: 1 },
   { label: "1w", sessions: 5, days: 7 },
   { label: "2w", sessions: 10, days: 14 },
   { label: "4w", sessions: 20, days: 28 },
+  { label: "to date", latest: true },
 ];
+// Crypto "to date" needs at least this long after the signal, so a backtest
+// run minutes after the pipeline doesn't score noise.
+const MIN_TO_DATE_MS = 3_600_000;
 const COIN_SPACING_MS = process.env.CROWD_COIN_SPACING_MS
   ? Math.max(0, Number(process.env.CROWD_COIN_SPACING_MS) || 0)
   : 10_000;
@@ -115,6 +122,16 @@ function coinExit(points, at, days) {
   return best && Math.abs(best.t - target) <= DAY ? best.p : null;
 }
 
+// Latest price after the signal: { t, p } or null. Stocks: the most recent
+// completed close after the snapshot. Crypto: the most recent point, if it is
+// at least MIN_TO_DATE_MS after the snapshot.
+function latestExit(px, at) {
+  const last = px.series.at(-1);
+  if (!last) return null;
+  const minGap = px.kind === "stock" ? 0 : MIN_TO_DATE_MS;
+  return last.t > at + minGap ? last : null;
+}
+
 async function fetchPrices(snapshots) {
   const from = Date.parse(snapshots[0].generatedAt) - 3 * DAY;
   const symbols = new Map(); // symbol -> asset class
@@ -164,7 +181,9 @@ function buildRows(snapshots, prices) {
         snapshot: snap.generatedAt,
         s: t.s,
         a: t.a,
+        p: Number.isFinite(t.p) ? t.p : null,
         sig: { [engine]: t.jev?.sig ?? null, OpenAI: t.openai?.sig ?? null, Crowd: t.crowd?.sig ?? null },
+        cv: { [engine]: t.jev?.cv ?? null, OpenAI: t.openai?.cv ?? null, Crowd: t.crowd?.cv ?? null },
         f: {
           [engine]: signed(t.jev),
           OpenAI: signed(t.openai),
@@ -176,13 +195,24 @@ function buildRows(snapshots, prices) {
         },
         ret: {},
         excess: {},
+        exit: {},
+        toDateAt: null,
       };
       const px = prices.get(t.s);
       for (const h of HORIZONS) {
         let exit = null;
         if (px && Number.isFinite(t.p) && t.p > 0) {
-          exit = px.kind === "stock" ? stockExit(px.series, at, h.sessions) : coinExit(px.series, at, h.days);
+          if (h.latest) {
+            const last = latestExit(px, at);
+            if (last) {
+              exit = last.p;
+              row.toDateAt = new Date(last.t).toISOString();
+            }
+          } else {
+            exit = px.kind === "stock" ? stockExit(px.series, at, h.sessions) : coinExit(px.series, at, h.days);
+          }
         }
+        row.exit[h.label] = exit;
         row.ret[h.label] = exit === null ? null : (exit / t.p - 1) * 100;
       }
       rows.push(row);
@@ -252,7 +282,7 @@ const f2 = (x) => (x === null || x === undefined ? "—" : (x >= 0 ? "+" : "") +
 const pad = (s, n) => String(s).padStart(n);
 
 function printMatrix({ cols, cells }) {
-  const short = cols.map((c) => c.replace(" (mkt-adj)", "").replace("CoinGecko votes", "CoinGecko").replace("Regulatory flag", "Regul.").replace("Day change %", "Day chg"));
+  const short = cols.map((c) => c.replace(" (mkt-adj)", "").replace("Fwd to date", "Fwd now").replace("CoinGecko votes", "CoinGecko").replace("Regulatory flag", "Regul.").replace("Day change %", "Day chg"));
   const w = 10;
   console.log("\nSpearman correlation (* = 95% interval excludes 0; n = pairs)\n");
   console.log(pad("", 13) + short.map((c) => pad(c.slice(0, w - 1), w)).join(""));
@@ -345,6 +375,10 @@ console.log(
     "same sector move together, so treat * as 'worth watching', not proof. More snapshots → more trustworthy.",
 );
 
-await writeFile(join(DATA_DIR, "backtest.json"), JSON.stringify({ generatedAt: new Date().toISOString(), rows, matrix, hits }, null, 2));
+const snapshotMeta = snapshots.map((s) => ({ generatedAt: s.generatedAt, engine: engineOf(s), jevEngine: s.jevEngine ?? null }));
+await writeFile(
+  join(DATA_DIR, "backtest.json"),
+  JSON.stringify({ generatedAt: new Date().toISOString(), horizons: HORIZONS.map((h) => h.label), snapshots: snapshotMeta, rows, matrix, hits }),
+);
 await writeFile(join(DATA_DIR, "backtest.html"), html(matrix, hits, snapshots, rows));
 console.log("\n[backtest] Wrote data/backtest.html (open it in a browser) and data/backtest.json.");

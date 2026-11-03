@@ -257,8 +257,11 @@ crypto, both keyless. It then reports:
   The columns are Jev / JevK5 (never mixed), OpenAI, TradingView, CoinGecko votes,
   the regulatory flag, the day's % change at signal time, and source count. The
   forward returns are ~1 day, ~1 week, ~2 weeks and ~4 weeks (1/5/10/20 trading
-  sessions for stocks, 1/7/14/28 days for crypto). Each cell carries n and a 95%
-  Fisher-z interval.
+  sessions for stocks, 1/7/14/28 days for crypto), plus **to date**: from the
+  signal to the latest price available (the last completed close for stocks,
+  the latest point at least an hour after the signal for crypto). A fresh
+  snapshot gets scored on "to date" from the next close onwards, before any
+  fixed window has passed. Each cell carries n and a 95% Fisher-z interval.
 - **Hit rate and average return per call**: the share of bullish/bearish calls
   followed by a market-adjusted move in that direction, plus the average return
   after bull, neutral and bear calls, and the bull−bear spread.
@@ -268,6 +271,28 @@ Returns are measured from the price recorded when the signals were computed
 average of its asset class over the same window. Output is printed and also written to
 `data/backtest.html` (colour-coded heatmap) and `data/backtest.json` (every
 row).
+
+### Performance page
+
+With `npm start` running, open <http://localhost:3000/performance.html> (or
+click **Performance** on the dashboard). It reads `data/backtest.json` and
+every saved run in `data/history/`, and shows:
+
+- a **scorecard** per engine: hit rate, hits/misses, average return after
+  bullish and bearish calls, and the bull−bear spread;
+- **hit rate by horizon**, as a chart plus a table with the same numbers;
+- **signal runs**: one row per pipeline run with when it ran, which engine
+  judged it, its bull/neutral/bear mix and each engine's hit rate so far;
+- **calls in a run**: every ticker's call per engine with conviction, the
+  price at signal time, the return since, and hit/miss. Click a ticker to see
+  how the call was made (each engine's summary, conviction, regulatory flag,
+  and the sources it read, with the per-source tags), what happened at every
+  horizon, and that ticker's calls across all runs.
+
+Filters at the top (horizon, market-adjusted vs raw, equities/crypto) apply
+to everything on the page. **Refresh returns** reruns the backtest in the
+background (about 4 minutes) and reloads when it's done. It only calls the
+free price APIs, never the pipeline.
 
 **How far to trust it:** with only a snapshot or two, every column is one
 market episode, and tickers in the same sector move together. The intervals
