@@ -8,7 +8,7 @@ import {
   CROWD_SEARCH_SPACING_MS,
   CROWD_COIN_SPACING_MS,
 } from "./config.js";
-import { getStockQuote, getCryptoQuote } from "./sources/marketData.js";
+import { getStockQuote, getCryptoQuotes } from "./sources/marketData.js";
 import { getNewsForCompany } from "./sources/news.js";
 import { getSeekingAlphaNews } from "./sources/seekingAlpha.js";
 import { getRedditPosts } from "./sources/reddit.js";
@@ -97,11 +97,14 @@ async function judgeWithBothEngines(tickerMeta, article, engineTimings) {
   return article;
 }
 
-async function gatherForTicker(tickerMeta, engineTimings, crowdSignals) {
-  const quote =
-    tickerMeta.a === "crypto"
-      ? await getCryptoQuote(tickerMeta.coingeckoId)
-      : await getStockQuote(tickerMeta.s);
+async function gatherForTicker(tickerMeta, engineTimings, crowdSignals, cryptoQuotes) {
+  let quote;
+  if (tickerMeta.a === "crypto") {
+    quote = cryptoQuotes.get(tickerMeta.coingeckoId);
+    if (!quote) throw new Error(`No CoinGecko quote for ${tickerMeta.coingeckoId}`);
+  } else {
+    quote = await getStockQuote(tickerMeta.s);
+  }
 
   const articles = (await gatherArticles(tickerMeta))
     .sort((a, b) => b.publishedAt - a.publishedAt)
@@ -126,6 +129,19 @@ export async function runPipeline(tickerList = TICKERS) {
   }
 
   const engineTimings = { jev: [], openai: [] };
+
+  // Every crypto price in one CoinGecko call, made before the crowd-vote
+  // lookups use up the keyless rate limit. Per-coin calls inside the ticker
+  // loop ran into 429s whenever REQUEST_SPACING_MS was short.
+  let cryptoQuotes = new Map();
+  try {
+    cryptoQuotes = await getCryptoQuotes(
+      tickerList.filter((t) => t.a === "crypto").map((t) => t.coingeckoId),
+    );
+  } catch (err) {
+    console.warn(`[pipeline] Crypto quotes unavailable, crypto tickers will be skipped: ${err.message}`);
+  }
+
   console.log("[pipeline] Fetching crowd signals (TradingView ratings, CoinGecko votes)…");
   const crowdSignals = await getCrowdSignals(tickerList, {
     searchSpacingMs: CROWD_SEARCH_SPACING_MS,
@@ -136,7 +152,7 @@ export async function runPipeline(tickerList = TICKERS) {
   const results = [];
   for (const tickerMeta of tickerList) {
     try {
-      const record = await gatherForTicker(tickerMeta, engineTimings, crowdSignals);
+      const record = await gatherForTicker(tickerMeta, engineTimings, crowdSignals, cryptoQuotes);
       results.push(record);
       const openaiNote = record.openai ? `, OpenAI: ${record.openai.sig}/${record.openai.cv}` : "";
       const crowdNote = record.crowd ? `, ${record.crowd.provider}: ${record.crowd.sig}/${record.crowd.cv}` : "";

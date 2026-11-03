@@ -42,7 +42,7 @@ export const TICKERS = [
   { s: "V", n: "Visa", sec: "Payments", a: "stock" },
   { s: "MA", n: "Mastercard", sec: "Payments", a: "stock" },
   { s: "PYPL", n: "PayPal", sec: "Payments", a: "stock" },
-  { s: "SQ", n: "Block", sec: "Payments", a: "stock" },
+  { s: "XYZ", n: "Block", sec: "Payments", a: "stock" }, // formerly SQ; Yahoo 404s the old symbol
   { s: "COIN", n: "Coinbase Global", sec: "Crypto Exchange", a: "stock" },
   { s: "SOFI", n: "SoFi Technologies", sec: "Fintech", a: "stock" },
   { s: "AXP", n: "American Express", sec: "Payments", a: "stock" },

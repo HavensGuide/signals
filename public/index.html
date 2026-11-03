@@ -124,7 +124,7 @@ body{background:var(--p-bg);color:var(--p-text);margin:0;font-family:var(--p-fon
 <body>
 
 <main class="fc-wrap">
-  <h1 class="fc-title">Today's signals<small>Stocks &amp; crypto · Jev vs OpenAI judgments, plus a public crowd signal</small></h1>
+  <h1 class="fc-title">Today's signals<small>Stocks &amp; crypto · <span id="fc-engine-name">Jev</span> judgments, plus a public crowd signal</small></h1>
   <div class="fc-toolbar">
     <input class="fc-search" id="fc-search" placeholder="Search a symbol or company…" />
     <div class="fc-chip-row" id="fc-assets">
@@ -154,6 +154,8 @@ let timings = null;
 let openaiEnabled = false;
 // Which engine filled the `jev` fields; older caches lack it and were all TypeSafe.
 let jevEngine = "TypeSafe/Jev";
+// Compact engine name for row and source-tag labels: "JevK5" or "Jev".
+function shortEngine(){ return jevEngine.startsWith("JevK5") ? "JevK5" : "Jev"; }
 const state = { asset: "all", q: "" };
 
 function escapeHtml(str){
@@ -241,7 +243,7 @@ function buildPanelHTML(d){
     '<div class="p-source"><div class="p-source-top"><span>'+escapeHtml(s.so)+' · '+escapeHtml(s.t)+' ago</span></div>'+
     '<div class="p-source-head">'+escapeHtml(s.h)+'</div>'+
     '<div class="p-source-tags">'+
-      '<span class="p-tag-label">Jev</span>'+tagOrNA(s.jevTag)+
+      '<span class="p-tag-label">'+escapeHtml(shortEngine())+'</span>'+tagOrNA(s.jevTag)+
       '<span class="p-tag-label">OpenAI</span>'+tagOrNA(s.openaiTag)+
     '</div></div>'
   )).join("");
@@ -289,7 +291,7 @@ function renderRow(d){
     return entry;
   };
 
-  const engines = el("div", { class: "fc-engines" }, engineEntry("Jev", d.jev));
+  const engines = el("div", { class: "fc-engines" }, engineEntry(shortEngine(), d.jev));
   if (d.openai) engines.appendChild(engineEntry("OpenAI", d.openai));
   if (d.crowd) engines.appendChild(engineEntry(d.crowd.provider, d.crowd));
 
@@ -335,6 +337,8 @@ async function load(){
     timings = payload.timings || null;
     openaiEnabled = Boolean(payload.openaiEnabled);
     jevEngine = String(payload.jevEngine || "TypeSafe/Jev");
+    document.getElementById("fc-engine-name").textContent =
+      shortEngine() + (openaiEnabled ? " vs OpenAI" : "");
     setStatus(DATA.length ? "" : "No tickers in the latest run.");
     renderTiming();
     render();

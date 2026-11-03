@@ -25,6 +25,19 @@ export async function fetchJson(url, opts) {
   return JSON.parse(text);
 }
 
+// fetchJson, retried once after `waitMs` on a 429. For CoinGecko's keyless
+// API, whose rate-limit window resets within about a minute.
+export async function fetchJsonRetry429(url, opts, waitMs = 60_000) {
+  try {
+    return await fetchJson(url, opts);
+  } catch (err) {
+    if (err.status !== 429) throw err;
+    console.warn(`[http] 429 from ${new URL(url).host}; retrying once in ${Math.round(waitMs / 1000)}s`);
+    await sleep(waitMs);
+    return fetchJson(url, opts);
+  }
+}
+
 export function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }

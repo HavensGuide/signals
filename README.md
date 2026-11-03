@@ -70,7 +70,8 @@ see below.
 
 - **Stock quotes**: Yahoo Finance's public chart endpoint
   (`query1.finance.yahoo.com/v8/finance/chart/<TICKER>`).
-- **Crypto quotes**: CoinGecko's public `/simple/price` endpoint.
+- **Crypto quotes**: CoinGecko's public `/simple/price` endpoint, one batched
+  call for every coin per run (retried once after 60s on a 429).
 - **News**: Google News RSS search per company (`news.google.com/rss/search`).
 - **Seeking Alpha** (`src/sources/seekingAlpha.js`): per-symbol RSS
   (`seekingalpha.com/api/sa/combined/<TICKER>.xml`), stocks only. Their feed
