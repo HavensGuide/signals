@@ -7,3 +7,4 @@ data/*.json
 data/backtest.html
 npm-debug.log*
 .graft/
+data/*.log

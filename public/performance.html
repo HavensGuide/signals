@@ -143,6 +143,11 @@ tbody tr.sel{background:var(--p-bg);box-shadow:inset 3px 0 0 var(--fc-accent);}
       <button class="chip" data-v="stock">Equities</button>
       <button class="chip" data-v="crypto">Crypto</button>
     </div>
+    <div class="fgroup" id="f-kind" hidden><span class="flabel">Runs</span>
+      <button class="chip active" data-v="all">All</button>
+      <button class="chip" data-v="live" title="Runs made by the pipeline at the time">Live</button>
+      <button class="chip" data-v="backfill" title="Past dates replayed by npm run backfill (Google News + SEC filings only)">Backfilled</button>
+    </div>
     <span class="spacer"></span>
     <span class="refresh-note" id="bt-age"></span>
     <button class="btn" id="bt-run">Refresh returns</button>
@@ -194,7 +199,7 @@ const ENGINE_ORDER = ["Jev", "JevK5", "OpenAI", "Crowd"];
 const ENGINE_LABEL = { Jev: "TypeSafe/Jev", JevK5: "JevK5 (local)", OpenAI: "OpenAI", Crowd: "Crowd" };
 const HORIZON_LABEL = { "1d": "1 day", "1w": "1 week", "2w": "2 weeks", "4w": "4 weeks", "to date": "To date" };
 const SIGN = { bull: 1, bear: -1, neu: 0 };
-const state = { horizon: "to date", mode: "excess", asset: "all", run: null, q: "", call: "all", sort: { key: "ret", dir: -1 } };
+const state = { horizon: "to date", mode: "excess", asset: "all", kind: "all", run: null, q: "", call: "all", sort: { key: "ret", dir: -1 } };
 let BT = null;         // backtest.json
 let HISTORY = [];      // /api/history list
 const snapCache = new Map(); // history id -> full snapshot
@@ -224,8 +229,12 @@ function outcome(row, engine, h){
   if (v == null) return { kind: "pending", v };
   return { kind: Math.sign(v) === SIGN[sig] ? "hit" : "miss", v };
 }
+let BACKFILLED = new Set(); // generatedAt of backfilled runs
+function kindOk(gen){
+  return state.kind === "all" || (state.kind === "backfill") === BACKFILLED.has(gen);
+}
 function filteredRows(){
-  return BT.rows.filter((r) => state.asset === "all" || r.a === state.asset);
+  return BT.rows.filter((r) => (state.asset === "all" || r.a === state.asset) && kindOk(r.snapshot));
 }
 function engines(){
   const present = new Set(BT.rows.flatMap((r) => Object.keys(r.sig).filter((k) => r.sig[k])));
@@ -251,7 +260,8 @@ function score(rows, engine, h){
 
 function renderTiles(){
   const rows = filteredRows();
-  $("score-scope").textContent = HORIZON_LABEL[state.horizon] + ", " + (state.mode === "excess" ? "market-adjusted" : "raw") + " returns, all runs";
+  $("score-scope").textContent = HORIZON_LABEL[state.horizon] + ", " + (state.mode === "excess" ? "market-adjusted" : "raw") + " returns, " +
+    ({ all: "all runs", live: "live runs", backfill: "backfilled runs" })[state.kind];
   $("tiles").innerHTML = engines().map((e) => {
     const s = score(rows, e, state.horizon);
     const head = `<div class="k"><span class="swatch" style="background:${engineVar(e)}"></span>${esc(ENGINE_LABEL[e])}</div>`;
@@ -344,7 +354,7 @@ function runRows(gen){ return filteredRows().filter((r) => r.snapshot === gen); 
 
 function renderRuns(){
   const eng = engines();
-  const metas = [...BT.snapshots].reverse();
+  const metas = BT.snapshots.filter((s) => kindOk(s.generatedAt)).reverse();
   $("runs").innerHTML = `<thead><tr><th class="l">Run</th><th class="l">Judged by</th><th>Bull / Neu / Bear</th>` +
     eng.map((e) => `<th><span class="call" style="justify-content:flex-end"><span class="swatch" style="background:${engineVar(e)}"></span>${esc(e)}</span></th>`).join("") +
     `<th class="l">${esc(HORIZON_LABEL[state.horizon])} returns</th></tr></thead><tbody>` +
@@ -361,7 +371,7 @@ function renderRuns(){
       const asOf = state.horizon === "to date" ? latestAt(rows) : null;
       return `<tr class="click${s.generatedAt === state.run ? " sel" : ""}" tabindex="0" data-run="${esc(s.generatedAt)}">` +
         `<td class="l"><b>${esc(fmtTime(s.generatedAt))}</b><div class="cv">${esc(ago(s.generatedAt))}</div></td>` +
-        `<td class="l">${esc(s.jevEngine || ENGINE_LABEL[s.engine])}</td>` +
+        `<td class="l">${esc(s.jevEngine || ENGINE_LABEL[s.engine])}${s.backfill ? ' <span class="res na" title="Replayed later from Google News + SEC filings published before this date">backfilled</span>' : ""}</td>` +
         `<td class="num"><span class="up">${c.bull}</span> / <span class="muted">${c.neu}</span> / <span class="down">${c.bear}</span></td>` + cells +
         `<td class="l small muted">${priced ? priced + " of " + rows.length + " priced" + (asOf ? " · through " + esc(fmtTime(asOf)) : "") : "none yet"}</td></tr>`;
     }).join("") + `</tbody>`;
@@ -483,7 +493,9 @@ async function openDetail(sym){
       engines().filter((e) => row.sig[e]).map((e) => `<th>${esc(e)}</th>`).join("") + `</tr></thead><tbody>${horizons}</tbody></table></div></div>` +
     (t ? block(meta.jevEngine || ENGINE_LABEL[engName], engineVar(engName), t.jev) + block("OpenAI (comparison)", engineVar("OpenAI"), t.openai) + block(t.crowd ? "Crowd · " + t.crowd.provider : "Crowd", engineVar("Crowd"), t.crowd)
        : '<p class="muted small">The saved run for this call could not be loaded, so its reasoning is unavailable.</p>') +
-    (sources ? `<div class="p-block"><div class="p-title">Sources the engine read (${(t.src || []).length})</div>${sources}</div>` : "") +
+    (sources ? `<div class="p-block"><div class="p-title">Sources the engine read (${(t.src || []).length})</div>` +
+      (meta.backfill ? '<p class="muted small" style="margin:0 0 .5rem">Backfilled run: Google News headlines from the 7 days before, and SEC filings from the 14 days before. Seeking Alpha, Reddit and the crowd signal have no history.</p>' : "") +
+      `${sources}</div>` : "") +
     `<div class="p-block"><div class="p-title">${esc(sym)} across runs · ${esc(HORIZON_LABEL[state.horizon])}</div><div class="card tbl-wrap" style="padding:.3rem .5rem"><table><thead><tr><th class="l">Run</th>` +
       engines().map((e) => `<th>${esc(e)}</th>`).join("") + `<th>Return</th></tr></thead><tbody>${past}</tbody></table></div></div>`);
 }
@@ -512,12 +524,15 @@ function chipGroup(id, key, after){
 chipGroup("f-horizon", "horizon");
 chipGroup("f-mode", "mode");
 chipGroup("f-asset", "asset");
+chipGroup("f-kind", "kind");
 chipGroup("f-call", "call", () => renderCalls());
 $("q").addEventListener("input", (e) => { state.q = e.target.value; renderCalls(); });
 let resizeT; window.addEventListener("resize", () => { clearTimeout(resizeT); resizeT = setTimeout(() => BT && renderChart(), 120); });
 
 function renderAll(){
   if (!BT) return;
+  // Keep the selected run inside the Live/Backfilled filter.
+  if (!kindOk(state.run)) state.run = BT.snapshots.filter((s) => kindOk(s.generatedAt)).at(-1)?.generatedAt ?? state.run;
   renderTiles(); renderChart(); renderRuns(); renderCalls();
 }
 
@@ -542,6 +557,8 @@ async function load(){
       data.rows.forEach((r) => { r.cv = r.cv || {}; r.exit = r.exit || {}; });
     }
     BT = data;
+    BACKFILLED = new Set(BT.snapshots.filter((s) => s.backfill).map((s) => s.generatedAt));
+    $("f-kind").hidden = BACKFILLED.size === 0;
     if (!BT.horizons.includes(state.horizon)) state.horizon = BT.horizons[0];
     $("f-horizon").querySelectorAll("[data-v]").forEach((b) => b.remove());
     $("f-horizon").insertAdjacentHTML("beforeend", BT.horizons.map((h) => `<button class="chip${h === state.horizon ? " active" : ""}" data-v="${esc(h)}">${esc(HORIZON_LABEL[h] || h)}</button>`).join(""));

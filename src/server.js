@@ -80,6 +80,7 @@ app.get("/api/history", async (_req, res, next) => {
         engine: engineOf(snap),
         jevEngine: snap.jevEngine ?? "TypeSafe/Jev",
         openaiEnabled: Boolean(snap.openaiEnabled),
+        backfill: Boolean(snap.backfill),
         tickers: snap.tickers?.length ?? 0,
         counts,
       };

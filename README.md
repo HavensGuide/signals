@@ -272,6 +272,54 @@ average of its asset class over the same window. Output is printed and also writ
 `data/backtest.html` (colour-coded heatmap) and `data/backtest.json` (every
 row).
 
+### Backfill: replaying past dates (`npm run backfill`)
+
+Live runs only start the record from the day you start running the
+pipeline. `scripts/backfill.js` replays it on past dates, using only the
+sources that can be queried "as of" a date:
+
+- **Google News** headlines published in the 7 days before the date
+  (`after:`/`before:` search operators, then a hard filter on publish date);
+- **SEC EDGAR** filings from the 14 days before (older submission pages are
+  loaded when a heavy filer's recent list doesn't reach back far enough).
+
+Seeking Alpha, Reddit and the crowd signal (TradingView, CoinGecko votes)
+have no history, so backfilled runs don't have them. Each run is judged by the
+configured engine and saved to `data/history/backfill-<date>.json` with
+`backfill: true`. The backtest and the Performance page score these runs like
+live ones, and the page can filter Live vs Backfilled.
+
+**Timing.** News stops at the end of the day before the run date, the run is
+stamped 19:30 UTC on that date, and the entry price is that day's close
+(stocks) or the next UTC midnight (crypto). So the price is always taken after
+the news, never before.
+
+**Defaults:** weekly (Mondays, or the next trading day after a holiday) from
+**2026-04-01** to yesterday. The start date is deliberate. JevK5 v0.3 is
+fine-tuned from Qwen3.5-4B, released February 2026, and neither publishes a
+knowledge cutoff. Dates before that could be judged with hindsight, because
+the model may have read how those stories ended.
+
+It requires `JUDGE_ENGINE=jevk5` (local and free) with llama-server running.
+A hosted engine needs `--allow-hosted`, since it would spend quota. Speed is
+about 9–10 minutes per date for the full ticker list on a 4B model, so a
+weekly backfill from April takes roughly 5 hours. It's resumable: dates that
+already have a file are skipped, so stop it with Ctrl+C and rerun whenever.
+
+```powershell
+npm run backfill                                   # weekly, 2026-04-01 → yesterday
+# Options. In PowerShell, call node directly (npm's PowerShell shim drops flags after --):
+node --env-file-if-exists=.env scripts/backfill.js --from 2026-05-01 --to 2026-06-30
+node --env-file-if-exists=.env scripts/backfill.js --every day --tickers AAPL,BTC
+```
+
+Then run `npm run backtest`, or click **Refresh returns** on the Performance page.
+
+Caveats: backfilled runs use fewer sources than live ones, so they test the
+news and filings part of the signal only. Google News's historical results
+are its top matches for that week, not exactly what its live feed showed
+then. The ticker list is today's, so companies that dropped out are missing.
+
 ### Performance page
 
 With `npm start` running, open <http://localhost:3000/performance.html> (or

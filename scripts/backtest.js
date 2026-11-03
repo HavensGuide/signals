@@ -359,7 +359,12 @@ if (snapshots.length === 0) {
   console.error("[backtest] No snapshots found. Run `npm run pipeline` first.");
   process.exit(1);
 }
-console.log(`[backtest] ${snapshots.length} snapshot(s): ${snapshots.map((s) => `${s.generatedAt} (${engineOf(s)})`).join(", ")}`);
+{
+  const backfilled = snapshots.filter((s) => s.backfill);
+  const live = snapshots.filter((s) => !s.backfill);
+  console.log(`[backtest] ${snapshots.length} snapshot(s): ${live.map((s) => `${s.generatedAt} (${engineOf(s)})`).join(", ")}` +
+    (backfilled.length ? `${live.length ? ", plus " : ""}${backfilled.length} backfilled (${backfilled[0].asOf ?? backfilled[0].generatedAt.slice(0, 10)} → ${backfilled.at(-1).asOf ?? backfilled.at(-1).generatedAt.slice(0, 10)})` : ""));
+}
 
 const prices = await fetchPrices(snapshots);
 const rows = buildRows(snapshots, prices);
@@ -375,7 +380,7 @@ console.log(
     "same sector move together, so treat * as 'worth watching', not proof. More snapshots → more trustworthy.",
 );
 
-const snapshotMeta = snapshots.map((s) => ({ generatedAt: s.generatedAt, engine: engineOf(s), jevEngine: s.jevEngine ?? null }));
+const snapshotMeta = snapshots.map((s) => ({ generatedAt: s.generatedAt, engine: engineOf(s), jevEngine: s.jevEngine ?? null, backfill: Boolean(s.backfill) }));
 await writeFile(
   join(DATA_DIR, "backtest.json"),
   JSON.stringify({ generatedAt: new Date().toISOString(), horizons: HORIZONS.map((h) => h.label), snapshots: snapshotMeta, rows, matrix, hits }),
