@@ -241,6 +241,42 @@ of two hours and real Jev quota.
 For quick iteration you can also run a subset straight from code:
 `runPipeline([tickerMeta, …])` accepts any slice of `TICKERS`.
 
+## Backtest (`npm run backtest`)
+
+Every pipeline run is also saved to `data/history/<generatedAt>.json`, so the
+signals as they stood on each date are kept. `data/history/` is tracked in git,
+seeded with the 2026-09-18 demo snapshot (TypeSafe/Jev + OpenAI + crowd). Commit new
+snapshots to keep the record, or git-ignore the folder if you'd rather not.
+
+`npm run backtest` (`scripts/backtest.js`) loads every snapshot and fetches
+the prices that followed it: Yahoo daily closes for stocks and CoinGecko for
+crypto, both keyless. It then reports:
+
+- **Spearman correlation matrix** between the signals and forward returns.
+  Signals are signed: bullish = +conviction, bearish = −conviction, neutral = 0.
+  The columns are Jev / JevK5 (never mixed), OpenAI, TradingView, CoinGecko votes,
+  the regulatory flag, the day's % change at signal time, and source count. The
+  forward returns are ~1 day, ~1 week, ~2 weeks and ~4 weeks (1/5/10/20 trading
+  sessions for stocks, 1/7/14/28 days for crypto). Each cell carries n and a 95%
+  Fisher-z interval.
+- **Hit rate and average return per call**: the share of bullish/bearish calls
+  followed by a market-adjusted move in that direction, plus the average return
+  after bull, neutral and bear calls, and the bull−bear spread.
+
+Returns are measured from the price recorded when the signals were computed
+(no look-ahead). They are market-adjusted: the ticker's return minus the
+average of its asset class over the same window. Output is printed and also written to
+`data/backtest.html` (colour-coded heatmap) and `data/backtest.json` (every
+row).
+
+**How far to trust it:** with only a snapshot or two, every column is one
+market episode, and tickers in the same sector move together. The intervals
+are optimistic, so a * means "worth watching", not proof. The test gets
+meaningful once the pipeline has run on a schedule for weeks (daily via cron or
+Windows Task Scheduler). A horizon only shows up once enough time has passed
+since a snapshot. CoinGecko lookups are paced by `CROWD_COIN_SPACING_MS`
+(about 3–4 min for 20 coins).
+
 ### Security notes
 
 - `TYPESAFE_API_KEY` and `OPENAI_API_KEY` are read from the environment
@@ -262,4 +298,4 @@ For quick iteration you can also run a subset straight from code:
   currently count equally in the aggregation) — flagged as a risk, not yet
   addressed
 - Other feature ideas raised but not built: alerts on signal flips,
-  backtested accuracy per ticker, sector heatmap, multi-timeframe signals
+  per-ticker accuracy (the backtest above is cross-sectional), sector heatmap, multi-timeframe signals
