@@ -301,16 +301,39 @@ knowledge cutoff. Dates before that could be judged with hindsight, because
 the model may have read how those stories ended.
 
 It requires `JUDGE_ENGINE=jevk5` (local and free) with llama-server running.
-A hosted engine needs `--allow-hosted`, since it would spend quota. Speed is
-about 9–10 minutes per date for the full ticker list on a 4B model, so a
-weekly backfill from April takes roughly 5 hours. It's resumable: dates that
-already have a file are skipped, so stop it with Ctrl+C and rerun whenever.
+A hosted engine needs `--allow-hosted`, since it would spend quota.
+
+**Stop and continue any time.** Every fetched source list and every judgment is
+appended to `data/backfill-cache/` (git-ignored) as soon as it exists. Ctrl+C,
+closing the window, a crash or a reboot loses at most the few judgments in
+flight. Run the same command again and it carries on: finished dates are
+skipped, and the unfinished one reuses everything already fetched and judged.
+Price history is cached for 12 hours, so restarts are quick. A run file is
+only written once all its judgments have succeeded. If the judge stops
+answering (e.g. llama-server crashed), the backfill retries for 3 minutes,
+then exits without saving the unfinished date.
+
+**Speed.** News for upcoming tickers is fetched while earlier ones are being
+judged, and 4 judgments run at once (`--concurrency`). Give llama-server
+matching slots. These settings also keep its GPU memory low (prompts are
+~170 tokens, so 1,024 per slot is plenty):
+
+```powershell
+llama-server -m jevk5-4b-v0.3-Q4_K_M.gguf -c 4096 -np 4 -ngl 99 -ub 256 -cram 0 --port 8090
+```
+
+The 4B model needs about 3 GB of GPU memory. If something else is using the
+GPU (another model, training, a game), it spills into system memory and slows
+to a crawl, and it can crash with "CUDA error: out of memory". Run the backfill
+when the GPU is free. CPU-only (`-ngl 0`) works but is much slower: about 4 s
+per judgment on a Ryzen 9 5900HS.
 
 ```powershell
 npm run backfill                                   # weekly, 2026-04-01 → yesterday
 # Options. In PowerShell, call node directly (npm's PowerShell shim drops flags after --):
+node --env-file-if-exists=.env scripts/backfill.js --status          # done / left / saved progress
 node --env-file-if-exists=.env scripts/backfill.js --from 2026-05-01 --to 2026-06-30
-node --env-file-if-exists=.env scripts/backfill.js --every day --tickers AAPL,BTC
+node --env-file-if-exists=.env scripts/backfill.js --every day --tickers AAPL,BTC --concurrency 2
 ```
 
 Then run `npm run backtest`, or click **Refresh returns** on the Performance page.
