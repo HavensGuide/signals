@@ -1,4 +1,4 @@
-import { fetchJson, sleep } from "../lib/httpJson.js";
+import { fetchJson, fetchJsonRetry429, sleep } from "../lib/httpJson.js";
 
 // Third per-ticker signal — deliberately NOT another model judgment. It comes
 // from free, keyless, popular public sources that produce their own directional
@@ -79,7 +79,7 @@ async function getCoinGeckoBullPct(coingeckoId) {
   const url =
     `https://api.coingecko.com/api/v3/coins/${encodeURIComponent(coingeckoId)}` +
     "?localization=false&tickers=false&market_data=false&community_data=true&developer_data=false";
-  const data = await fetchJson(url, { headers: { "User-Agent": BROWSER_UA } });
+  const data = await fetchJsonRetry429(url, { headers: { "User-Agent": BROWSER_UA } });
   return typeof data.sentiment_votes_up_percentage === "number"
     ? data.sentiment_votes_up_percentage
     : null;

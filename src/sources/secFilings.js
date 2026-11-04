@@ -83,30 +83,60 @@ async function describeForm4(cikNumeric, accessionNumber, primaryDocument) {
   return `${ownerName} (${title}) ${direction}${codeLabel}`;
 }
 
-export async function getRecentFilings(ticker) {
+// Submissions JSON per CIK. Live runs fetch it fresh each time; the backfill
+// passes `cache` so one download serves every replayed date.
+// `recent` holds only a filer's latest ~1000 filings, which for heavy Form 4
+// filers can stop short of the backfill window; with `sinceMs`, older pages
+// (filings.files) overlapping the window are fetched and appended in order.
+async function loadSubmissions(cik, cache, sinceMs = null) {
+  if (cache?.has(cik)) return cache.get(cik);
+  const data = await fetchJson(`https://data.sec.gov/submissions/CIK${cik}.json`, { headers: secHeaders });
+  const recent = data?.filings?.recent;
+  if (recent && sinceMs !== null) {
+    const since = new Date(sinceMs).toISOString().slice(0, 10);
+    const oldest = recent.filingDate.at(-1);
+    if (oldest && oldest > since) {
+      for (const page of data.filings.files ?? []) {
+        if (page.filingTo < since) continue;
+        const older = await fetchJson(`https://data.sec.gov/submissions/${page.name}`, { headers: secHeaders });
+        for (const key of ["form", "filingDate", "accessionNumber", "primaryDocument"]) recent[key].push(...(older[key] ?? []));
+      }
+    }
+  }
+  cache?.set(cik, data);
+  return data;
+}
+const form4Cache = new Map(); // accession -> description (filings never change)
+
+// `asOfMs` (backfill only): return the filings as they stood just before
+// that moment. filingDate is a calendar day, so a filing counts only if its
+// day is strictly before asOfMs's UTC day.
+export async function getRecentFilings(ticker, { asOfMs = null, cache = null, sinceMs = null } = {}) {
   const cikMap = await loadTickerCikMap();
   const cik = cikMap.get(ticker.toUpperCase());
   if (!cik) return [];
   const cikNumeric = String(Number(cik));
 
-  const data = await fetchJson(`https://data.sec.gov/submissions/CIK${cik}.json`, {
-    headers: secHeaders,
-  });
+  const data = await loadSubmissions(cik, cache, sinceMs);
   const recent = data?.filings?.recent;
   if (!recent) return [];
 
-  const cutoff = Date.now() - FILING_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
+  const now = asOfMs ?? Date.now();
+  const cutoff = now - FILING_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
+  const dayStart = asOfMs === null ? Infinity : Date.UTC(new Date(asOfMs).getUTCFullYear(), new Date(asOfMs).getUTCMonth(), new Date(asOfMs).getUTCDate());
   const filerName = data.name || ticker;
   const filings = [];
   for (let i = 0; i < recent.form.length && filings.length < MAX_FILINGS_PER_TICKER; i++) {
     const form = recent.form[i];
     const filedAt = new Date(recent.filingDate[i]);
-    if (!RELEVANT_FILING_FORMS.has(form) || filedAt.getTime() < cutoff) continue;
+    if (!RELEVANT_FILING_FORMS.has(form) || filedAt.getTime() < cutoff || filedAt.getTime() >= dayStart) continue;
 
     let headline = `${filerName} filed Form ${form}`;
     if (form === "4") {
       try {
-        const detail = await describeForm4(cikNumeric, recent.accessionNumber[i], recent.primaryDocument[i]);
+        const acc = recent.accessionNumber[i];
+        if (!form4Cache.has(acc)) form4Cache.set(acc, await describeForm4(cikNumeric, acc, recent.primaryDocument[i]));
+        const detail = form4Cache.get(acc);
         if (detail) headline = `${filerName} insider filing: ${detail}`;
       } catch (err) {
         console.warn(`[secFilings] Form 4 detail failed for ${ticker}: ${err.message}`);

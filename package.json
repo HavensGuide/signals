@@ -9,6 +9,8 @@
   },
   "scripts": {
     "pipeline": "node --env-file-if-exists=.env scripts/run-pipeline.js",
+    "backfill": "node --env-file-if-exists=.env scripts/backfill.js",
+    "backtest":"node --env-file-if-exists=.env scripts/backtest.js",
     "start": "node --env-file-if-exists=.env src/server.js",
     "dev": "node --env-file-if-exists=.env --watch src/server.js"
   },

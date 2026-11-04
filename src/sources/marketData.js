@@ -1,4 +1,4 @@
-import { fetchJson } from "../lib/httpJson.js";
+import { fetchJson, fetchJsonRetry429 } from "../lib/httpJson.js";
 
 // Free, keyless quote endpoints. Both are unofficial-but-widely-used public
 // APIs (no API key, no paid tier) rather than a documented contract, so we
@@ -27,15 +27,23 @@ export async function getStockQuote(ticker) {
   };
 }
 
-export async function getCryptoQuote(coingeckoId) {
-  const url = `https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent(coingeckoId)}&vs_currencies=usd&include_24hr_change=true`;
-  const data = await fetchJson(url);
-  const entry = data?.[coingeckoId];
-  if (!entry || typeof entry.usd !== "number") {
-    throw new Error(`No quote data for ${coingeckoId}`);
+// All crypto quotes in one request: /simple/price takes a comma-separated id
+// list, so the whole crypto universe costs one call against CoinGecko's
+// keyless rate limit instead of one per coin. Returns Map<coingeckoId, quote>;
+// ids CoinGecko doesn't return are simply absent.
+export async function getCryptoQuotes(coingeckoIds) {
+  const out = new Map();
+  if (coingeckoIds.length === 0) return out;
+  const url =
+    "https://api.coingecko.com/api/v3/simple/price?ids=" +
+    coingeckoIds.map(encodeURIComponent).join(",") +
+    "&vs_currencies=usd&include_24hr_change=true";
+  const data = await fetchJsonRetry429(url);
+  for (const id of coingeckoIds) {
+    const entry = data?.[id];
+    if (entry && typeof entry.usd === "number") {
+      out.set(id, { price: entry.usd, changePct: entry.usd_24h_change ?? 0 });
+    }
   }
-  return {
-    price: entry.usd,
-    changePct: entry.usd_24h_change ?? 0,
-  };
+  return out;
 }

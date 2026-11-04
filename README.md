@@ -70,7 +70,8 @@ see below.
 
 - **Stock quotes**: Yahoo Finance's public chart endpoint
   (`query1.finance.yahoo.com/v8/finance/chart/<TICKER>`).
-- **Crypto quotes**: CoinGecko's public `/simple/price` endpoint.
+- **Crypto quotes**: CoinGecko's public `/simple/price` endpoint, one batched
+  call for every coin per run (retried once after 60s on a 429).
 - **News**: Google News RSS search per company (`news.google.com/rss/search`).
 - **Seeking Alpha** (`src/sources/seekingAlpha.js`): per-symbol RSS
   (`seekingalpha.com/api/sa/combined/<TICKER>.xml`), stocks only. Their feed
@@ -126,6 +127,51 @@ see below.
 Per ticker, all sources are merged and capped at `MAX_ARTICLES_PER_TICKER`
 (8, most-recent-first) before any Jev calls — adding sources broadens what's
 considered without letting per-ticker Jev cost grow unbounded.
+
+## Local engine: JevK5 (optional)
+
+Set `JUDGE_ENGINE=jevk5` in `.env` to swap TypeSafe's hosted Jev for
+[JevK5](https://github.com/allebee/jevk5), an independent Apache-2.0
+open-weight Jev alternative (Qwen3.5-4B or 9B plus a distilled LoRA; not
+affiliated with TypeSafe). It answers the same `choice`/`score`/`noul`
+question types the same way — a probability per option from one forward
+pass, nothing generated — so its results fill the dashboard's `jev` slot
+unchanged, labelled "JevK5 (local)". No API key, no quota.
+
+Serve a GGUF from [alibiserikbay/JevK5-GGUF](https://huggingface.co/alibiserikbay/JevK5-GGUF)
+with llama.cpp (needs a build recent enough for Qwen3.5's hybrid layers):
+
+```sh
+llama-server -m jevk5-4b-v0.3-Q4_K_M.gguf -c 8192 -ngl 99 --port 8090
+```
+
+then set `JUDGE_ENGINE=jevk5` (and `JEVK5_URL` if not `http://127.0.0.1:8090`)
+and run `npm run pipeline` as usual.
+
+`src/judgeJevK5.js` is a port of JevK5's own llama.cpp client
+(`jevk5/gguf.py` + `jevk5/prompt.py`, v0.3.x). It sends the pinned prompt,
+byte for byte, as token ids via `/tokenize` + `/completion`, reads the answer
+letters' log-probabilities (`n_probs`), and renormalises them under the
+model's calibration temperature (`JEVK5_TEMPERATURE`, 1.22 for v0.3 4B).
+Each question is its own request (3 per article), where Jev batches all three
+into one `systemOne` call.
+
+Things to know, from JevK5's own README and model card:
+
+- **Quantization:** the v0.3 4B Q4_K_M matches bf16 on 221 of JevBench's 231
+  public items (Q8_0: 229, Q5_K_M: 224). Use Q8_0 or Q5_K_M if they fit.
+- **Measured quality is general-purpose**, not financial: JevBench v1.4 ranks
+  JevK5 v0.2 second of 76 (Jev first), and the v0.3 4B scores 0.784 on the
+  public hard tier. Nobody has measured it on headline sentiment, so treat the
+  first runs as a comparison against Jev, not a drop-in guarantee.
+- **English only.** Inputs over 16,384 tokens are refused (headlines are far
+  below that; `-c 8192` is plenty).
+- **Speed:** ~0.6 s per short decision on CPU alone or an M1 Pro (4B), ~13 ms
+  on an H100; consumer GPUs are unmeasured. The dashboard's judging-speed table
+  records the real numbers for your machine.
+- With no hosted judge to rate-limit, `REQUEST_SPACING_MS` defaults to 5s
+  (unless OpenAI is on) — the remaining spacing protects the free news/quote
+  endpoints.
 
 ## TypeSafe vs OpenAI comparison (optional)
 
@@ -195,6 +241,138 @@ of two hours and real Jev quota.
 For quick iteration you can also run a subset straight from code:
 `runPipeline([tickerMeta, …])` accepts any slice of `TICKERS`.
 
+## Backtest (`npm run backtest`)
+
+Every pipeline run is also saved to `data/history/<generatedAt>.json`, so the
+signals as they stood on each date are kept. `data/history/` is tracked in git,
+seeded with the 2026-09-18 demo snapshot (TypeSafe/Jev + OpenAI + crowd). Commit new
+snapshots to keep the record, or git-ignore the folder if you'd rather not.
+
+`npm run backtest` (`scripts/backtest.js`) loads every snapshot and fetches
+the prices that followed it: Yahoo daily closes for stocks and CoinGecko for
+crypto, both keyless. It then reports:
+
+- **Spearman correlation matrix** between the signals and forward returns.
+  Signals are signed: bullish = +conviction, bearish = −conviction, neutral = 0.
+  The columns are Jev / JevK5 (never mixed), OpenAI, TradingView, CoinGecko votes,
+  the regulatory flag, the day's % change at signal time, and source count. The
+  forward returns are ~1 day, ~1 week, ~2 weeks and ~4 weeks (1/5/10/20 trading
+  sessions for stocks, 1/7/14/28 days for crypto), plus **to date**: from the
+  signal to the latest price available (the last completed close for stocks,
+  the latest point at least an hour after the signal for crypto). A fresh
+  snapshot gets scored on "to date" from the next close onwards, before any
+  fixed window has passed. Each cell carries n and a 95% Fisher-z interval.
+- **Hit rate and average return per call**: the share of bullish/bearish calls
+  followed by a market-adjusted move in that direction, plus the average return
+  after bull, neutral and bear calls, and the bull−bear spread.
+
+Returns are measured from the price recorded when the signals were computed
+(no look-ahead). They are market-adjusted: the ticker's return minus the
+average of its asset class over the same window. Output is printed and also written to
+`data/backtest.html` (colour-coded heatmap) and `data/backtest.json` (every
+row).
+
+### Backfill: replaying past dates (`npm run backfill`)
+
+Live runs only start the record from the day you start running the
+pipeline. `scripts/backfill.js` replays it on past dates, using only the
+sources that can be queried "as of" a date:
+
+- **Google News** headlines published in the 7 days before the date
+  (`after:`/`before:` search operators, then a hard filter on publish date);
+- **SEC EDGAR** filings from the 14 days before (older submission pages are
+  loaded when a heavy filer's recent list doesn't reach back far enough).
+
+Seeking Alpha, Reddit and the crowd signal (TradingView, CoinGecko votes)
+have no history, so backfilled runs don't have them. Each run is judged by the
+configured engine and saved to `data/history/backfill-<date>.json` with
+`backfill: true`. The backtest and the Performance page score these runs like
+live ones, and the page can filter Live vs Backfilled.
+
+**Timing.** News stops at the end of the day before the run date, the run is
+stamped 19:30 UTC on that date, and the entry price is that day's close
+(stocks) or the next UTC midnight (crypto). So the price is always taken after
+the news, never before.
+
+**Defaults:** weekly (Mondays, or the next trading day after a holiday) from
+**2026-04-01** to yesterday. The start date is deliberate. JevK5 v0.3 is
+fine-tuned from Qwen3.5-4B, released February 2026, and neither publishes a
+knowledge cutoff. Dates before that could be judged with hindsight, because
+the model may have read how those stories ended.
+
+It requires `JUDGE_ENGINE=jevk5` (local and free) with llama-server running.
+A hosted engine needs `--allow-hosted`, since it would spend quota.
+
+**Stop and continue any time.** Every fetched source list and every judgment is
+appended to `data/backfill-cache/` (git-ignored) as soon as it exists. Ctrl+C,
+closing the window, a crash or a reboot loses at most the few judgments in
+flight. Run the same command again and it carries on: finished dates are
+skipped, and the unfinished one reuses everything already fetched and judged.
+Price history is cached for 12 hours, so restarts are quick. A run file is
+only written once all its judgments have succeeded. If the judge stops
+answering (e.g. llama-server crashed), the backfill retries for 3 minutes,
+then exits without saving the unfinished date.
+
+**Speed.** News for upcoming tickers is fetched while earlier ones are being
+judged, and 4 judgments run at once (`--concurrency`). Give llama-server
+matching slots. These settings also keep its GPU memory low (prompts are
+~170 tokens, so 1,024 per slot is plenty):
+
+```powershell
+llama-server -m jevk5-4b-v0.3-Q4_K_M.gguf -c 4096 -np 4 -ngl 99 -ub 256 -cram 0 --port 8090
+```
+
+The 4B model needs about 3 GB of GPU memory. If something else is using the
+GPU (another model, training, a game), it spills into system memory and slows
+to a crawl, and it can crash with "CUDA error: out of memory". Run the backfill
+when the GPU is free. CPU-only (`-ngl 0`) works but is much slower: about 4 s
+per judgment on a Ryzen 9 5900HS.
+
+```powershell
+npm run backfill                                   # weekly, 2026-04-01 → yesterday
+# Options. In PowerShell, call node directly (npm's PowerShell shim drops flags after --):
+node --env-file-if-exists=.env scripts/backfill.js --status          # done / left / saved progress
+node --env-file-if-exists=.env scripts/backfill.js --from 2026-05-01 --to 2026-06-30
+node --env-file-if-exists=.env scripts/backfill.js --every day --tickers AAPL,BTC --concurrency 2
+```
+
+Then run `npm run backtest`, or click **Refresh returns** on the Performance page.
+
+Caveats: backfilled runs use fewer sources than live ones, so they test the
+news and filings part of the signal only. Google News's historical results
+are its top matches for that week, not exactly what its live feed showed
+then. The ticker list is today's, so companies that dropped out are missing.
+
+### Performance page
+
+With `npm start` running, open <http://localhost:3000/performance.html> (or
+click **Performance** on the dashboard). It reads `data/backtest.json` and
+every saved run in `data/history/`, and shows:
+
+- a **scorecard** per engine: hit rate, hits/misses, average return after
+  bullish and bearish calls, and the bull−bear spread;
+- **hit rate by horizon**, as a chart plus a table with the same numbers;
+- **signal runs**: one row per pipeline run with when it ran, which engine
+  judged it, its bull/neutral/bear mix and each engine's hit rate so far;
+- **calls in a run**: every ticker's call per engine with conviction, the
+  price at signal time, the return since, and hit/miss. Click a ticker to see
+  how the call was made (each engine's summary, conviction, regulatory flag,
+  and the sources it read, with the per-source tags), what happened at every
+  horizon, and that ticker's calls across all runs.
+
+Filters at the top (horizon, market-adjusted vs raw, equities/crypto) apply
+to everything on the page. **Refresh returns** reruns the backtest in the
+background (about 4 minutes) and reloads when it's done. It only calls the
+free price APIs, never the pipeline.
+
+**How far to trust it:** with only a snapshot or two, every column is one
+market episode, and tickers in the same sector move together. The intervals
+are optimistic, so a * means "worth watching", not proof. The test gets
+meaningful once the pipeline has run on a schedule for weeks (daily via cron or
+Windows Task Scheduler). A horizon only shows up once enough time has passed
+since a snapshot. CoinGecko lookups are paced by `CROWD_COIN_SPACING_MS`
+(about 3–4 min for 20 coins).
+
 ### Security notes
 
 - `TYPESAFE_API_KEY` and `OPENAI_API_KEY` are read from the environment
@@ -216,4 +394,4 @@ For quick iteration you can also run a subset straight from code:
   currently count equally in the aggregation) — flagged as a risk, not yet
   addressed
 - Other feature ideas raised but not built: alerts on signal flips,
-  backtested accuracy per ticker, sector heatmap, multi-timeframe signals
+  per-ticker accuracy (the backtest above is cross-sectional), sector heatmap, multi-timeframe signals

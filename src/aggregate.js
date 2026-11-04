@@ -74,11 +74,16 @@ export function buildSourceList(articles) {
     }));
 }
 
-export function buildTickerRecord(tickerMeta, quote, articles, { openaiEnabled, crowdSignal = null }) {
+export function buildTickerRecord(
+  tickerMeta,
+  quote,
+  articles,
+  { openaiEnabled, crowdSignal = null, jevLabel = "TypeSafe/Jev" },
+) {
   const jevJudged = articles
     .filter((a) => a.jevJudgment)
     .map((a) => ({ ...a, judgment: a.jevJudgment }));
-  const jev = summarizeJudgments("TypeSafe/Jev", jevJudged);
+  const jev = summarizeJudgments(jevLabel, jevJudged);
 
   let openai = null;
   if (openaiEnabled) {

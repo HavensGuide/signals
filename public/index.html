@@ -36,6 +36,9 @@ body{background:var(--p-bg);color:var(--p-text);margin:0;font-family:var(--p-fon
 [hidden]{display:none !important;}
 
 .fc-wrap{ max-width:640px; margin:0 auto; padding:2.1rem 1.2rem 4rem; }
+.fc-nav{ display:flex; gap:1rem; font:700 .74rem/1 var(--p-font-body); text-transform:uppercase; letter-spacing:.06em; margin-bottom:1.1rem; }
+.fc-nav a{ color:var(--p-dim); text-decoration:none; padding-bottom:.3rem; border-bottom:2px solid transparent; }
+.fc-nav a.on{ color:var(--p-text); border-color:var(--fc-accent); }
 .fc-title{ font-family:var(--p-font-display); font-size:1.85rem; font-weight:600; margin:0; letter-spacing:-.01em; }
 .fc-title small{ display:block; font-family:var(--p-font-body); font-weight:600; font-size:.7rem; color:var(--p-dim); text-transform:uppercase; letter-spacing:.08em; margin-top:.45rem; }
 .fc-toolbar{ display:flex; gap:.5rem; margin:1.3rem 0 1.5rem; flex-wrap:wrap; align-items:center; }
@@ -124,7 +127,8 @@ body{background:var(--p-bg);color:var(--p-text);margin:0;font-family:var(--p-fon
 <body>
 
 <main class="fc-wrap">
-  <h1 class="fc-title">Today's signals<small>Stocks &amp; crypto · Jev vs OpenAI judgments, plus a public crowd signal</small></h1>
+  <nav class="fc-nav"><a href="/" class="on">Today's signals</a><a href="/performance.html">Performance</a></nav>
+  <h1 class="fc-title">Today's signals<small>Stocks &amp; crypto · <span id="fc-engine-name">Jev</span> judgments, plus a public crowd signal</small></h1>
   <div class="fc-toolbar">
     <input class="fc-search" id="fc-search" placeholder="Search a symbol or company…" />
     <div class="fc-chip-row" id="fc-assets">
@@ -152,6 +156,10 @@ let DATA = [];
 let generatedAt = null;
 let timings = null;
 let openaiEnabled = false;
+// Which engine filled the `jev` fields; older caches lack it and were all TypeSafe.
+let jevEngine = "TypeSafe/Jev";
+// Compact engine name for row and source-tag labels: "JevK5" or "Jev".
+function shortEngine(){ return jevEngine.startsWith("JevK5") ? "JevK5" : "Jev"; }
 const state = { asset: "all", q: "" };
 
 function escapeHtml(str){
@@ -191,7 +199,7 @@ function fmtMs(ms){
 function renderTiming(){
   const box = document.getElementById("fc-timing");
   if (!timings || (!timings.jev && !timings.openai)) { box.hidden = true; return; }
-  const engines = [["TypeSafe/Jev", timings.jev], ["OpenAI", timings.openai]];
+  const engines = [[escapeHtml(jevEngine), timings.jev], ["OpenAI", timings.openai]];
   const means = engines.map(e => e[1] && e[1].meanMs).filter(m => m != null);
   const fastest = means.length > 1 ? Math.min(...means) : null;
   const rows = engines.map(([name, t]) => {
@@ -239,14 +247,14 @@ function buildPanelHTML(d){
     '<div class="p-source"><div class="p-source-top"><span>'+escapeHtml(s.so)+' · '+escapeHtml(s.t)+' ago</span></div>'+
     '<div class="p-source-head">'+escapeHtml(s.h)+'</div>'+
     '<div class="p-source-tags">'+
-      '<span class="p-tag-label">Jev</span>'+tagOrNA(s.jevTag)+
+      '<span class="p-tag-label">'+escapeHtml(shortEngine())+'</span>'+tagOrNA(s.jevTag)+
       '<span class="p-tag-label">OpenAI</span>'+tagOrNA(s.openaiTag)+
     '</div></div>'
   )).join("");
   return '<div class="p-head"><div><h2 class="p-sym">'+escapeHtml(d.s)+'</h2><div class="p-name">'+escapeHtml(d.n)+' · '+escapeHtml(d.sec)+'</div>'+
       '<div class="p-price">'+fmtPrice(d.p)+' <span class="'+(d.c>=0?"pup":"pdown")+'">'+fmtChg(d.c)+'</span></div></div>'+
       '<button class="p-close" aria-label="Close">✕</button></div>'+
-    engineBlock("TypeSafe / Jev", d.jev)+
+    engineBlock(jevEngine, d.jev)+
     engineBlock("OpenAI (comparison)", d.openai)+
     (d.crowd ? engineBlock(d.crowd.provider, d.crowd) : "")+
     '<div class="p-section-title">Sources</div>'+
@@ -287,7 +295,7 @@ function renderRow(d){
     return entry;
   };
 
-  const engines = el("div", { class: "fc-engines" }, engineEntry("Jev", d.jev));
+  const engines = el("div", { class: "fc-engines" }, engineEntry(shortEngine(), d.jev));
   if (d.openai) engines.appendChild(engineEntry("OpenAI", d.openai));
   if (d.crowd) engines.appendChild(engineEntry(d.crowd.provider, d.crowd));
 
@@ -332,6 +340,9 @@ async function load(){
     generatedAt = payload.generatedAt;
     timings = payload.timings || null;
     openaiEnabled = Boolean(payload.openaiEnabled);
+    jevEngine = String(payload.jevEngine || "TypeSafe/Jev");
+    document.getElementById("fc-engine-name").textContent =
+      shortEngine() + (openaiEnabled ? " vs OpenAI" : "");
     setStatus(DATA.length ? "" : "No tickers in the latest run.");
     renderTiming();
     render();

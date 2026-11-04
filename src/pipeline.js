@@ -8,12 +8,12 @@ import {
   CROWD_SEARCH_SPACING_MS,
   CROWD_COIN_SPACING_MS,
 } from "./config.js";
-import { getStockQuote, getCryptoQuote } from "./sources/marketData.js";
+import { getStockQuote, getCryptoQuotes } from "./sources/marketData.js";
 import { getNewsForCompany } from "./sources/news.js";
 import { getSeekingAlphaNews } from "./sources/seekingAlpha.js";
 import { getRedditPosts } from "./sources/reddit.js";
 import { getRecentFilings } from "./sources/secFilings.js";
-import { judgeArticle } from "./judge.js";
+import { judgeArticle, ENGINE_LABEL } from "./judge.js";
 import { judgeArticleOpenAI, OPENAI_ENABLED } from "./judgeOpenAI.js";
 import { buildTickerRecord } from "./aggregate.js";
 import { getCrowdSignals } from "./sources/crowdSignal.js";
@@ -83,7 +83,7 @@ async function judgeWithBothEngines(tickerMeta, article, engineTimings) {
   try {
     article.jevJudgment = await timeEngineCall(engineTimings.jev, () => judgeArticle(input));
   } catch (err) {
-    console.warn(`[pipeline] Jev judgment failed for ${tickerMeta.s} article "${article.headline}": ${err.message}`);
+    console.warn(`[pipeline] ${ENGINE_LABEL} judgment failed for ${tickerMeta.s} article "${article.headline}": ${err.message}`);
   }
 
   if (OPENAI_ENABLED) {
@@ -97,11 +97,14 @@ async function judgeWithBothEngines(tickerMeta, article, engineTimings) {
   return article;
 }
 
-async function gatherForTicker(tickerMeta, engineTimings, crowdSignals) {
-  const quote =
-    tickerMeta.a === "crypto"
-      ? await getCryptoQuote(tickerMeta.coingeckoId)
-      : await getStockQuote(tickerMeta.s);
+async function gatherForTicker(tickerMeta, engineTimings, crowdSignals, cryptoQuotes) {
+  let quote;
+  if (tickerMeta.a === "crypto") {
+    quote = cryptoQuotes.get(tickerMeta.coingeckoId);
+    if (!quote) throw new Error(`No CoinGecko quote for ${tickerMeta.coingeckoId}`);
+  } else {
+    quote = await getStockQuote(tickerMeta.s);
+  }
 
   const articles = (await gatherArticles(tickerMeta))
     .sort((a, b) => b.publishedAt - a.publishedAt)
@@ -113,17 +116,32 @@ async function gatherForTicker(tickerMeta, engineTimings, crowdSignals) {
 
   return buildTickerRecord(tickerMeta, quote, articles, {
     openaiEnabled: OPENAI_ENABLED,
+    jevLabel: ENGINE_LABEL,
     crowdSignal: crowdSignals.get(tickerMeta.s) ?? null,
   });
 }
 
 // `tickerList` defaults to the full universe; pass a subset for cheap dev runs.
 export async function runPipeline(tickerList = TICKERS) {
+  console.log(`[pipeline] Judgment engine: ${ENGINE_LABEL}`);
   if (OPENAI_ENABLED) {
     console.log("[pipeline] OpenAI comparison enabled — this doubles per-article judgment calls and cost.");
   }
 
   const engineTimings = { jev: [], openai: [] };
+
+  // Every crypto price in one CoinGecko call, made before the crowd-vote
+  // lookups use up the keyless rate limit. Per-coin calls inside the ticker
+  // loop ran into 429s whenever REQUEST_SPACING_MS was short.
+  let cryptoQuotes = new Map();
+  try {
+    cryptoQuotes = await getCryptoQuotes(
+      tickerList.filter((t) => t.a === "crypto").map((t) => t.coingeckoId),
+    );
+  } catch (err) {
+    console.warn(`[pipeline] Crypto quotes unavailable, crypto tickers will be skipped: ${err.message}`);
+  }
+
   console.log("[pipeline] Fetching crowd signals (TradingView ratings, CoinGecko votes)…");
   const crowdSignals = await getCrowdSignals(tickerList, {
     searchSpacingMs: CROWD_SEARCH_SPACING_MS,
@@ -134,11 +152,11 @@ export async function runPipeline(tickerList = TICKERS) {
   const results = [];
   for (const tickerMeta of tickerList) {
     try {
-      const record = await gatherForTicker(tickerMeta, engineTimings, crowdSignals);
+      const record = await gatherForTicker(tickerMeta, engineTimings, crowdSignals, cryptoQuotes);
       results.push(record);
       const openaiNote = record.openai ? `, OpenAI: ${record.openai.sig}/${record.openai.cv}` : "";
       const crowdNote = record.crowd ? `, ${record.crowd.provider}: ${record.crowd.sig}/${record.crowd.cv}` : "";
-      console.log(`[pipeline] ${tickerMeta.s}: Jev ${record.jev.sig}/${record.jev.cv}${openaiNote}${crowdNote} (${record.src.length} sources)`);
+      console.log(`[pipeline] ${tickerMeta.s}: ${ENGINE_LABEL} ${record.jev.sig}/${record.jev.cv}${openaiNote}${crowdNote} (${record.src.length} sources)`);
     } catch (err) {
       console.error(`[pipeline] Skipping ${tickerMeta.s}: ${err.message}`);
     }
@@ -148,6 +166,8 @@ export async function runPipeline(tickerList = TICKERS) {
   const payload = {
     generatedAt: new Date().toISOString(),
     openaiEnabled: OPENAI_ENABLED,
+    // Which engine produced the `jev` fields ("TypeSafe/Jev" or "JevK5 (local)").
+    jevEngine: ENGINE_LABEL,
     timings: {
       jev: summarizeTimings(engineTimings.jev),
       openai: OPENAI_ENABLED ? summarizeTimings(engineTimings.openai) : null,
